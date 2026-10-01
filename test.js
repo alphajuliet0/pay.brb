@@ -53,3 +53,7 @@ eq('weekly count',E.statement({mode:'perm',amount:50000,unit:'year'},'week').cou
 eq('4-weekly count',E.statement({mode:'perm',amount:50000,unit:'year'},'fourweek').count,13);
 console.log(fails ? fails + ' FAILED' : 'ALL PASSED');
 process.exit(fails ? 1 : 0);
+// Umbrella: invoice splits exactly into gross + employer costs + pension + fee
+var um = E.umbrella({ rate: 500, days: 5, pensionPct: 10, taxCode: '1257L' });
+eq('umbrella split sums to invoice', um.gross + um.ernic + um.levy + um.pension + um.margin, um.invoice, 0.02);
+eq('umbrella net = gross - tax - NI', um.net, um.gross - um.tax - um.ni, 0.01);
