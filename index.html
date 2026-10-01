@@ -20,7 +20,7 @@ h2{font-family:var(--hd);font-weight:500;font-size:13px;letter-spacing:.08em;tex
 .seg.two button{flex:1 1 50%}
 .seg.two button:nth-child(-n+2){border-bottom:1px solid var(--hair)}
 label{display:block;font-size:13px;color:var(--dim);margin:12px 0 4px;font-weight:500}
-.row{display:flex;gap:10px}.row>*{flex:1;min-width:0}
+.ln{display:flex;justify-content:space-between;gap:10px;padding:6px 0;border-bottom:1px solid var(--hair)}.ln:last-child{border:0}.row{display:flex;gap:10px}.row>*{flex:1;min-width:0}
 input,select{width:100%;min-height:48px;background:var(--s2);color:var(--cream);border:1px solid var(--hair);border-radius:0;padding:12px;font:500 17px var(--bd);appearance:none;-webkit-appearance:none}
 select{background-image:linear-gradient(45deg,transparent 50%,var(--dim) 50%),linear-gradient(135deg,var(--dim) 50%,transparent 50%);background-position:calc(100% - 18px) 21px,calc(100% - 13px) 21px;background-size:5px 5px;background-repeat:no-repeat;padding-right:32px}
 input:focus,select:focus,button:focus-visible{outline:2px solid var(--cream);outline-offset:1px}
@@ -111,6 +111,7 @@ td.best{color:var(--ok);font-weight:700}
       ['Any other activity not listed elsewhere', 12],
       ['Limited cost business (goods under 2% of turnover or £1,000)', 16.5]
     ],
+    umbrella: { margin: 39.5, levy: 0.005, stWeek: 96, ptWeek: 242, uelWeek: 967 },
     bankHolidays: 8, hoursPerDay: 7.5
   };
 
@@ -385,7 +386,39 @@ td.best{color:var(--ok);font-weight:700}
     return {frequency:frequency,count:count,periods:periods,annualNet:totals.reduce(function(a,b){return a+b;},0)/100,result:r};
   }
 
-  var api = { RATES: RATES, statement: statement, calc: calc, calcAt: calcAt, household: household, solveForNet: solveForNet, incomeTax: incomeTax,
+
+  /* ---- Umbrella company payroll (weekly pay run) ----
+     The umbrella keeps its margin, pays the pension and employer costs out of the invoice, and pays you the rest as taxable gross.
+     Solve: gross + employer NIC + levy + employer pension + margin = invoice, with ER NIC = 15% x (gross - weekly threshold).
+     Tax is weekly PAYE on the code; taxable pay is rounded up to the next whole pound (matches a real Giant slip to the penny). */
+  function umbrella(p) {
+    var u = RATES.umbrella, n = RATES.ni;
+    var rate = pos(+p.rate || 0), days = pos(+p.days || 0), margin = pos(p.margin != null ? +p.margin : u.margin);
+    var pensionPct = pos(+p.pensionPct || 0), invoice = r2(rate * days);
+    var pension = r2(invoice * pensionPct / 100);
+    var th = u.stWeek, erRate = n.employer, levyRate = u.levy;
+    var gross = (invoice - margin - pension + erRate * th) / (1 + erRate + levyRate);
+    if (gross * (erRate + levyRate) < 0 || gross < th) gross = (invoice - margin - pension) / (1 + levyRate);
+    gross = pos(r2(gross));
+    var ernic = r2(erRate * pos(gross - th)), levy = r2(levyRate * gross);
+    var code = String(p.taxCode || '1257L').toUpperCase().replace(/\s/g, ''), free = 0, flat = null;
+    var m = /^(\d+)L$/.exec(code);
+    if (code === '0T') free = 0; else if (m) free = (parseInt(m[1], 10) * 10 + 9) / 52; else if (code === 'BR') flat = 0.2; else if (code === 'D0') flat = 0.4; else if (code === 'D1') flat = 0.45; else if (code === 'NT') flat = 0;
+    var taxable = Math.ceil(pos(gross - free));
+    var tax;
+    if (flat != null) tax = taxable * flat; else {
+      var bb = RATES.basicBand / 52, al = RATES.additionalAt / 52;
+      tax = RATES.rate.basic * Math.min(taxable, bb) + RATES.rate.higher * pos(Math.min(taxable, al) - bb) + RATES.rate.additional * pos(taxable - al);
+    }
+    tax = r2(tax);
+    var ni = r2(n.main * pos(Math.min(gross, u.uelWeek) - u.ptWeek) + n.upper * pos(gross - u.uelWeek));
+    var net = r2(gross - tax - ni);
+    return { invoice: invoice, margin: margin, pension: pension, ernic: ernic, levy: levy, gross: gross, tax: tax, ni: ni, net: net,
+      codeKnown: flat != null || code === '0T' || !!m, code: code, share: invoice ? net / invoice : 0,
+      deducted: r2(invoice - gross), pensionPotPlusNet: r2(net + pension) };
+  }
+
+  var api = { umbrella: umbrella, RATES: RATES, statement: statement, calc: calc, calcAt: calcAt, household: household, solveForNet: solveForNet, incomeTax: incomeTax,
     class1: class1, class4: class4, employerNI: employerNI, corpTax: corpTax, studentLoan: studentLoan, toAnnual: toAnnual,
     periods: periods, workdays: workdays, r2: r2 };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.BRBPAY = api;
@@ -399,8 +432,8 @@ var PER=[['hour','Hour'],['day','Day'],['week','Week'],['month','Month'],['year'
 function newPerson(mode){return{mode:mode||'ltd',amount:mode==='perm'?60000:500,unit:mode==='perm'?'year':'day',dpw:5,hoursPerDay:7.5,holidayDays:25,bankHols:8,sickDays:0,
  expenses:0,vatRegistered:false,vatFlat:false,frsRate:14.5,salaryMode:'optimise',salaryCustom:12570,pension:0,pensionUnit:'amt',pensionMethod:'net',employerPension:0,
  studentLoan:'none',pg:false,erInclusive:true};}
-var S={tab:'calc',joint:false,who:0,names:['Person A','Person B'],period:'month',slipFrequency:'month',slipNumber:1,people:[newPerson('ltd'),newPerson('perm')],tgt:{amount:4000,unit:'month'}};
-try{var sv=JSON.parse(localStorage.getItem(KEY)||'null');if(sv&&sv.people){S=Object.assign(S,sv);S.people=sv.people.map(function(p){return Object.assign(newPerson(p.mode),p)});S.tgt=sv.tgt||S.tgt;S.names=(Array.isArray(sv.names)?sv.names:[]).slice(0,2);}}catch(e){}
+var S={tab:'calc',joint:false,who:0,names:['Person A','Person B'],period:'month',slipFrequency:'month',slipNumber:1,people:[newPerson('ltd'),newPerson('perm')],tgt:{amount:4000,unit:'month'},umb:{rate:500,days:5,margin:39.5,pensionPct:0,taxCode:'1257L'}};
+try{var sv=JSON.parse(localStorage.getItem(KEY)||'null');if(sv&&sv.people){S=Object.assign(S,sv);S.people=sv.people.map(function(p){return Object.assign(newPerson(p.mode),p)});S.tgt=sv.tgt||S.tgt;S.umb=Object.assign({rate:500,days:5,margin:39.5,pensionPct:0,taxCode:'1257L'},sv.umb||{});S.names=(Array.isArray(sv.names)?sv.names:[]).slice(0,2);}}catch(e){}
 function pn(i){var n=S.names&&S.names[i];n=n?String(n).trim():'';return n||(i===0?'Person A':'Person B')}
 try{var q=new URLSearchParams(location.search);if(q.get('tab'))S.tab=q.get('tab');if(q.get('mode'))S.people[0].mode=q.get('mode');if(q.get('amount'))S.people[0].amount=+q.get('amount');if(q.get('unit'))S.people[0].unit=q.get('unit');if(q.get('joint')){S.joint=true;S.who=+q.get('who')||0}}catch(e){}
 function save(){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}}
@@ -494,6 +527,21 @@ function compareHTML(){
  h+='<p class="hint">Inside IR35 means the client treats you as an employee for tax, so there is no dividend route. Whether you are inside or outside is for your client to decide and tell you, not something this page can answer. Sole trader often comes out ahead at higher incomes now dividend tax has risen, but a limited company gives liability protection and lets you leave profit in the company.</p>';
  return h;}
 
+/* ---------- umbrella ---------- */
+function umbHTML(){
+ var u=S.umb;
+ return '<h2>Umbrella company payslip</h2><div class="card"><p class="hint" style="margin:0 0 8px">An umbrella company employs you and invoices the agency. It keeps a weekly fee, pays employer NI, the apprenticeship levy and any employer pension out of the invoice, then pays you the rest through PAYE. Enter the figures from your payslip. Weekly pay only.</p>'
+ +'<div class="row"><div><label for="u_rate">Day rate</label><div class="amt"><span class="pre">\u00a3</span><input id="u_rate" data-uk="rate" type="text" inputmode="decimal" value="'+esc(u.rate)+'"></div></div><div><label for="u_days">Days that week</label><input id="u_days" data-uk="days" type="text" inputmode="decimal" value="'+esc(u.days)+'"></div></div>'
+ +'<div class="row"><div><label for="u_margin">Umbrella fee a week</label><div class="amt"><span class="pre">\u00a3</span><input id="u_margin" data-uk="margin" type="text" inputmode="decimal" value="'+esc(u.margin)+'"></div></div><div><label for="u_pen">Employer pension, % of invoice</label><input id="u_pen" data-uk="pensionPct" type="text" inputmode="decimal" value="'+esc(u.pensionPct)+'"></div></div>'
+ +'<label for="u_code">Tax code</label><input id="u_code" data-uk="taxCode" type="text" autocapitalize="characters" autocomplete="off" value="'+esc(u.taxCode)+'"></div><div id="ures"></div>';}
+function umbRes(){
+ var u=S.umb,r=E.umbrella({rate:u.rate,days:u.days,margin:u.margin,pensionPct:u.pensionPct,taxCode:u.taxCode});
+ function ln(a,b,c){return'<div class="ln"><span>'+a+'</span><b'+(c?' class="'+c+'"':'')+'>'+b+'</b></div>'}
+ var h='<div class="card"><b>Invoice to pay split</b>'+ln('Invoice (rate x days)',gbp(r.invoice,2))+ln('Umbrella fee',gbp(-r.margin,2))+ln('Employer NI (15% over \u00a396)',gbp(-r.ernic,2))+ln('Apprenticeship levy (0.5%)',gbp(-r.levy,2))+ln('Employer pension',gbp(-r.pension,2))+ln('Taxable gross pay',gbp(r.gross,2),'')
+ +ln('Income tax ('+esc(r.code)+')',gbp(-r.tax,2))+ln('Employee NI',gbp(-r.ni,2))+'<div class="ln"><span><b>Net pay</b></span><b>'+gbp(r.net,2)+'</b></div></div>'
+ +'<div class="card"><p class="hint" style="margin:0">The umbrella costs you the fee, employer NI and levy: '+gbp(r.margin+r.ernic+r.levy,2)+' this week. Net pay is '+pc(r.share)+' of the invoice. Pension of '+gbp(r.pension,2)+' goes into your pot on top of net pay.</p></div>'
+ +'<p class="hint">Exact to the penny against a real Giant 4-day payslip on 0T (weekly, England). Approximated: holiday pay is inside your gross already, so it is not split out; other tax codes use the standard weekly allowance, not HMRC tables; cumulative or week 1 codes, student loan and expenses are not modelled. Estimate, not tax advice.</p>';
+ return h;}
 /* ---------- target ---------- */
 function targetHTML(){
  var p=P(),t=S.tgt;
@@ -520,7 +568,7 @@ function infoHTML(){
 var LOGO='<svg aria-label="brb" viewBox="0 0 1726 757" xmlns="http://www.w3.org/2000/svg"><path fill="#F0EDE8" transform="translate(-76 757) scale(1 -1)" d="M76 757V226C76 74 143 0 270 0H416C556 0 644 86 644 264C644 442 556 528 416 528H182V757ZM405 426C497 426 537 378 537 264C537 150 497 103 405 103H301C215 103 182 141 182 231V426Z"/><path fill="#C8221A" transform="translate(619 757) scale(1 -1)" d="M218 528C114 528 75 480 75 374V0H181V358C181 404 202 426 249 426H435V528Z"/><path fill="#F0EDE8" transform="translate(1082 757) scale(1 -1)" d="M76 757V226C76 74 143 0 270 0H416C556 0 644 86 644 264C644 442 556 528 416 528H182V757ZM405 426C497 426 537 378 537 264C537 150 497 103 405 103H301C215 103 182 141 182 231V426Z"/></svg>';
 var DISC='<div class="disc">An estimate for guidance only, not tax or financial advice. It uses published HMRC rates for '+R.year+' and the assumptions listed under About. Your own position may differ. IR35 status is decided by your client or fee-payer, not by this page. Speak to an accountant before making decisions about pay, pensions or company structure. Your figures stay on this device. A bigredbox tool.</div>';
 function shell(){
- var tabs=[['calc','Calculate'],['cmp','Compare'],['tgt','Target'],['info','About']];
+ var tabs=[['calc','Calculate'],['cmp','Compare'],['tgt','Target'],['umb','Umbrella'],['info','About']];
  var h='<div class="wrap"><header><div class="brand">pay.'+LOGO+'</div><span class="yr">'+R.year+'</span></header><div class="tabs" role="tablist">'+tabs.map(function(t){return'<button role="tab" type="button" data-tab="'+t[0]+'" aria-selected="'+(S.tab===t[0])+'">'+t[1]+'</button>'}).join('')+'</div><main id="main"></main>'+DISC+'</div>';
  $('#app').innerHTML=h;}
 function main(){
@@ -531,16 +579,18 @@ function main(){
   h+='<div class="card" id="form">'+formHTML(P())+'</div><div id="res"></div>';}
  else if(S.tab==='cmp')h='<div id="cmp"></div>';
  else if(S.tab==='tgt')h=targetHTML();
+ else if(S.tab==='umb')h=umbHTML();
  else h=infoHTML();
  m.innerHTML=h;paint();}
 function paint(){
  if(S.tab==='calc'){if(S.joint&&$('#household'))$('#household').innerHTML=householdOverview();$('#res').innerHTML=resultsHTML();var p=P();if(p.mode!=='perm'){var hh=$('#wdhint');if(hh)hh.textContent='Working days a year: '+E.workdays(p)+'.'}}
  else if(S.tab==='cmp')$('#cmp').innerHTML=compareHTML();
- else if(S.tab==='tgt')$('#tres').innerHTML=targetRes();}
+ else if(S.tab==='tgt')$('#tres').innerHTML=targetRes();
+ else if(S.tab==='umb')$('#ures').innerHTML=umbRes();}
 function setField(el){
  var k=el.dataset.k,t=el.dataset.t,v=el.value;if(t==='b')v=el.checked;else if(t==='n'){var x=parseFloat(String(v).replace(/[,\u00a3\s]/g,''));v=isNaN(x)?0:x}
  var p=P();p[k]=(k==='frsRate')?parseFloat(v):v;save();}
-document.addEventListener('input',function(e){var el=e.target;if(el.dataset.nm){S.names[+el.dataset.nm]=el.value.slice(0,24);save();paint();return}if(el.dataset.k&&el.type!=='checkbox'&&el.tagName!=='SELECT'){setField(el);paint()}
+document.addEventListener('input',function(e){var el=e.target;if(el.dataset.uk){var k=el.dataset.uk,v=el.value;if(k!=='taxCode'){var x=parseFloat(String(v).replace(/[,\u00a3\s%]/g,''));v=isNaN(x)?0:x}S.umb[k]=v;save();$('#ures').innerHTML=umbRes();return}if(el.dataset.nm){S.names[+el.dataset.nm]=el.value.slice(0,24);save();paint();return}if(el.dataset.k&&el.type!=='checkbox'&&el.tagName!=='SELECT'){setField(el);paint()}
  if(el.dataset.tk){S.tgt[el.dataset.tk]=el.dataset.tk==='amount'?el.value:el.value;save();$('#tres').innerHTML=targetRes()}});
 document.addEventListener('change',function(e){var el=e.target;if(el.dataset.slip){if(el.dataset.slip==='frequency'){S.slipFrequency=el.value;S.slipNumber=1}else S.slipNumber=+el.value;save();paint();return}
  if(el.dataset.k&&(el.type==='checkbox'||el.tagName==='SELECT')){setField(el);var structural=['vatRegistered','vatFlat','salaryMode','unit'].indexOf(el.dataset.k)>-1;
