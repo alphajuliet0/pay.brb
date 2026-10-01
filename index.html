@@ -416,7 +416,8 @@ function chk(k,label,v){return'<label class="chk"><input type="checkbox" data-k=
 
 /* ---------- form ---------- */
 function formHTML(p){
- var h='<div class="seg two" role="group" aria-label="Pay type">'+MODES.map(function(m){return'<button type="button" data-mode="'+m[0]+'" aria-pressed="'+(p.mode===m[0])+'">'+m[1]+'</button>'}).join('')+'</div>';
+ var h=S.joint?'<label for="person_name">Name<input id="person_name" type="text" maxlength="24" data-nm="'+S.who+'" value="'+esc(S.names[S.who]||'')+'" placeholder="'+(S.who===0?'Person A':'Person B')+'" autocomplete="off"></label>':'';
+ h+='<div class="seg two" role="group" aria-label="Pay type">'+MODES.map(function(m){return'<button type="button" data-mode="'+m[0]+'" aria-pressed="'+(p.mode===m[0])+'">'+m[1]+'</button>'}).join('')+'</div>';
  var lab=p.mode==='perm'?'Salary':p.mode==='sole'?'Income (excl. VAT)':p.mode==='inside'?'Rate (excl. VAT)':'Contract rate (excl. VAT)';
  h+='<label for="f_amount">'+lab+'</label><div class="amt"><span class="pre">\u00a3</span><input id="f_amount" data-k="amount" data-t="n" type="text" inputmode="decimal" value="'+esc(p.amount)+'"><select data-k="unit" aria-label="Period">'+opts(UNITS,p.unit)+'</select></div>';
  if(p.mode==='inside')h+='<p class="hint">Public sector or medium/large client: the fee-payer works out the deemed payment and deducts PAYE and NI before paying you.</p>';
@@ -526,7 +527,7 @@ function main(){
  var m=$('#main'),h='';
  if(S.tab==='calc'){
   h+='<div class="seg" role="group" aria-label="Who"><button type="button" data-joint="0" aria-pressed="'+!S.joint+'">Just me</button><button type="button" data-joint="1" aria-pressed="'+S.joint+'">Joint income</button></div>';
-  if(S.joint)h+='<div id="household">'+householdOverview()+'</div><div class="seg" role="tablist" aria-label="Person"><button type="button" data-who="0" aria-selected="'+(S.who===0)+'">'+esc(pn(0))+'</button><button type="button" data-who="1" aria-selected="'+(S.who===1)+'">'+esc(pn(1))+'</button></div><div class="card" style="display:flex;gap:10px;flex-wrap:wrap"><label style="flex:1;min-width:130px">First name<input type="text" maxlength="24" data-nm="0" value="'+esc(S.names[0]||'')+'" placeholder="Person A" autocomplete="off"></label><label style="flex:1;min-width:130px">Second name<input type="text" maxlength="24" data-nm="1" value="'+esc(S.names[1]||'')+'" placeholder="Person B" autocomplete="off"></label></div>';
+  if(S.joint)h+='<div id="household">'+householdOverview()+'</div>';
   h+='<div class="card" id="form">'+formHTML(P())+'</div><div id="res"></div>';}
  else if(S.tab==='cmp')h='<div id="cmp"></div>';
  else if(S.tab==='tgt')h=targetHTML();
@@ -539,7 +540,7 @@ function paint(){
 function setField(el){
  var k=el.dataset.k,t=el.dataset.t,v=el.value;if(t==='b')v=el.checked;else if(t==='n'){var x=parseFloat(String(v).replace(/[,\u00a3\s]/g,''));v=isNaN(x)?0:x}
  var p=P();p[k]=(k==='frsRate')?parseFloat(v):v;save();}
-document.addEventListener('input',function(e){var el=e.target;if(el.dataset.nm){S.names[+el.dataset.nm]=el.value.slice(0,24);save();var bs=document.querySelectorAll('.seg [data-who]');for(var i=0;i<bs.length;i++){bs[i].textContent=pn(+bs[i].dataset.who)}paint();return}if(el.dataset.k&&el.type!=='checkbox'&&el.tagName!=='SELECT'){setField(el);paint()}
+document.addEventListener('input',function(e){var el=e.target;if(el.dataset.nm){S.names[+el.dataset.nm]=el.value.slice(0,24);save();paint();return}if(el.dataset.k&&el.type!=='checkbox'&&el.tagName!=='SELECT'){setField(el);paint()}
  if(el.dataset.tk){S.tgt[el.dataset.tk]=el.dataset.tk==='amount'?el.value:el.value;save();$('#tres').innerHTML=targetRes()}});
 document.addEventListener('change',function(e){var el=e.target;if(el.dataset.slip){if(el.dataset.slip==='frequency'){S.slipFrequency=el.value;S.slipNumber=1}else S.slipNumber=+el.value;save();paint();return}
  if(el.dataset.k&&(el.type==='checkbox'||el.tagName==='SELECT')){setField(el);var structural=['vatRegistered','vatFlat','salaryMode','unit'].indexOf(el.dataset.k)>-1;
