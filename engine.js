@@ -27,6 +27,7 @@
       ['Any other activity not listed elsewhere', 12],
       ['Limited cost business (goods under 2% of turnover or £1,000)', 16.5]
     ],
+    umbrella: { margin: 39.5, levy: 0.005, stWeek: 96, ptWeek: 242, uelWeek: 967 },
     bankHolidays: 8, hoursPerDay: 7.5
   };
 
@@ -301,7 +302,39 @@
     return {frequency:frequency,count:count,periods:periods,annualNet:totals.reduce(function(a,b){return a+b;},0)/100,result:r};
   }
 
-  var api = { RATES: RATES, statement: statement, calc: calc, calcAt: calcAt, household: household, solveForNet: solveForNet, incomeTax: incomeTax,
+
+  /* ---- Umbrella company payroll (weekly pay run) ----
+     The umbrella keeps its margin, pays the pension and employer costs out of the invoice, and pays you the rest as taxable gross.
+     Solve: gross + employer NIC + levy + employer pension + margin = invoice, with ER NIC = 15% x (gross - weekly threshold).
+     Tax is weekly PAYE on the code; taxable pay is rounded up to the next whole pound (matches a real Giant slip to the penny). */
+  function umbrella(p) {
+    var u = RATES.umbrella, n = RATES.ni;
+    var rate = pos(+p.rate || 0), days = pos(+p.days || 0), margin = pos(p.margin != null ? +p.margin : u.margin);
+    var pensionPct = pos(+p.pensionPct || 0), invoice = r2(rate * days);
+    var pension = r2(invoice * pensionPct / 100);
+    var th = u.stWeek, erRate = n.employer, levyRate = u.levy;
+    var gross = (invoice - margin - pension + erRate * th) / (1 + erRate + levyRate);
+    if (gross * (erRate + levyRate) < 0 || gross < th) gross = (invoice - margin - pension) / (1 + levyRate);
+    gross = pos(r2(gross));
+    var ernic = r2(erRate * pos(gross - th)), levy = r2(levyRate * gross);
+    var code = String(p.taxCode || '1257L').toUpperCase().replace(/\s/g, ''), free = 0, flat = null;
+    var m = /^(\d+)L$/.exec(code);
+    if (code === '0T') free = 0; else if (m) free = (parseInt(m[1], 10) * 10 + 9) / 52; else if (code === 'BR') flat = 0.2; else if (code === 'D0') flat = 0.4; else if (code === 'D1') flat = 0.45; else if (code === 'NT') flat = 0;
+    var taxable = Math.ceil(pos(gross - free));
+    var tax;
+    if (flat != null) tax = taxable * flat; else {
+      var bb = RATES.basicBand / 52, al = RATES.additionalAt / 52;
+      tax = RATES.rate.basic * Math.min(taxable, bb) + RATES.rate.higher * pos(Math.min(taxable, al) - bb) + RATES.rate.additional * pos(taxable - al);
+    }
+    tax = r2(tax);
+    var ni = r2(n.main * pos(Math.min(gross, u.uelWeek) - u.ptWeek) + n.upper * pos(gross - u.uelWeek));
+    var net = r2(gross - tax - ni);
+    return { invoice: invoice, margin: margin, pension: pension, ernic: ernic, levy: levy, gross: gross, tax: tax, ni: ni, net: net,
+      codeKnown: flat != null || code === '0T' || !!m, code: code, share: invoice ? net / invoice : 0,
+      deducted: r2(invoice - gross), pensionPotPlusNet: r2(net + pension) };
+  }
+
+  var api = { umbrella: umbrella, RATES: RATES, statement: statement, calc: calc, calcAt: calcAt, household: household, solveForNet: solveForNet, incomeTax: incomeTax,
     class1: class1, class4: class4, employerNI: employerNI, corpTax: corpTax, studentLoan: studentLoan, toAnnual: toAnnual,
     periods: periods, workdays: workdays, r2: r2 };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.BRBPAY = api;
