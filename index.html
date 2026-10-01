@@ -26,7 +26,7 @@ select{background-image:linear-gradient(45deg,transparent 50%,var(--dim) 50%),li
 input:focus,select:focus,button:focus-visible{outline:2px solid var(--cream);outline-offset:1px}
 .amt{display:flex}.amt .pre{background:var(--s2);border:1px solid var(--hair);border-right:0;padding:0 12px;display:flex;align-items:center;color:var(--dim);font:500 17px var(--bd)}
 .amt input{font-size:24px;font-family:var(--hd);font-weight:500}
-.amt select{max-width:46%;font-size:16px}
+.amt select{flex:0 0 44%;width:44%;min-width:0;font-size:16px}.amt input{flex:1 1 auto;min-width:0}
 details{border-top:1px solid var(--hair);margin-top:14px;padding-top:2px}
 summary{cursor:pointer;font:600 15px var(--hd);padding:12px 0;min-height:48px;list-style:none;display:flex;justify-content:space-between;align-items:center}
 summary::-webkit-details-marker{display:none}
