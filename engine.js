@@ -273,7 +273,35 @@
     return { people: rs, net: net, totalTax: tot, gross: gross, effective: gross ? tot / gross : 0 };
   }
 
-  var api = { RATES: RATES, calc: calc, calcAt: calcAt, household: household, solveForNet: solveForNet, incomeTax: incomeTax,
+  /* Planning statement, not a payroll calculator. Split rounded annual cash flows
+     across a full tax year; penny remainders land in the final period. */
+  function statement(p, frequency) {
+    var r = calc(p), count = {month:12, week:52, fourweek:13}[frequency] || 12;
+    var er = (p.mode === 'ltd' || (p.mode === 'inside' && p.erInclusive !== false)) ? r.extra.employerNI : 0;
+    var employeeNI = (p.mode === 'ltd' || p.mode === 'inside') ? r.ni - er : r.ni;
+    var flows = [[p.mode === 'perm' ? 'Gross salary' : 'Income / invoice (excl. VAT)', r.annualGross]];
+    var surplus = vatSurplus(p, r.annualGross);
+    if ((p.mode === 'sole' || p.mode === 'ltd') && surplus) flows.push(['VAT flat rate surplus', surplus]);
+    if (p.expenses && p.mode !== 'perm') flows.push([p.mode === 'inside' ? 'Allowable expenses removed' : 'Business / company expenses', -p.expenses]);
+    if (p.mode === 'ltd' && r.employerPension) flows.push(['Company pension', -r.employerPension]);
+    if (er) flows.push(['Employer NI from income', -er]);
+    if (p.mode === 'ltd') flows.push(['Corporation tax reserve', -r.ct]);
+    flows.push([p.mode === 'sole' || p.mode === 'ltd' ? 'Income tax reserve' : 'Income tax estimate', -r.tax]);
+    if (p.mode === 'ltd') flows.push(['Dividend tax reserve', -r.divTax]);
+    flows.push([p.mode === 'sole' ? 'Class 4 NI reserve' : 'Employee NI estimate', -employeeNI]);
+    flows.push(['Personal pension contribution', -r.pensionPersonal], ['Student / postgraduate loan', -r.sl]);
+    var totals = flows.map(function(x){return Math.round(x[1]*100);});
+    function allocated(c, n) {var part=Math.trunc(c/count); return n===count ? c-part*(count-1) : part;}
+    var ytd=totals.map(function(){return 0;}), periods=[];
+    for(var n=1;n<=count;n++){
+      var net=0, cumulative=0;
+      var lines=flows.map(function(x,i){var cents=allocated(totals[i],n);ytd[i]+=cents;net+=cents;cumulative+=ytd[i];return {label:x[0],amount:cents/100,ytd:ytd[i]/100};});
+      periods.push({number:n,lines:lines,net:net/100,ytdNet:cumulative/100});
+    }
+    return {frequency:frequency,count:count,periods:periods,annualNet:totals.reduce(function(a,b){return a+b;},0)/100,result:r};
+  }
+
+  var api = { RATES: RATES, statement: statement, calc: calc, calcAt: calcAt, household: household, solveForNet: solveForNet, incomeTax: incomeTax,
     class1: class1, class4: class4, employerNI: employerNI, corpTax: corpTax, studentLoan: studentLoan, toAnnual: toAnnual,
     periods: periods, workdays: workdays, r2: r2 };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.BRBPAY = api;
