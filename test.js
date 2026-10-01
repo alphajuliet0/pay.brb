@@ -36,5 +36,20 @@ console.log('ContractorUK default: outside net', out.net.toFixed(0), '(theirs 56
 eq('outside vs ContractorUK', out.net, 56709, 60); eq('inside vs ContractorUK', ins.net, 53805, 60);
 // Monotonic + solver
 var s = E.solveForNet({ mode: 'inside' }, 40000); eq('solver round trip', E.calcAt({ mode: 'inside' }, s).net, 40000, 0.5);
+// Period statements: reconcile cash-flow lines and YTD in every mode/frequency.
+['perm','sole','ltd','inside'].forEach(function(mode){
+ ['month','week','fourweek'].forEach(function(f){
+  var p={mode:mode,amount:88000,unit:'year',expenses:mode==='perm'?0:3000,pension:2400,employerPension:3000,studentLoan:'2',pg:true,vatRegistered:true,vatFlat:true,frsRate:14.5};
+  var st=E.statement(p,f),last=st.periods[st.count-1];
+  eq(mode+' '+f+' annual reconciliation',last.ytdNet,E.calc(p).net,0.05);
+  eq(mode+' '+f+' sum periods',st.periods.reduce(function(a,x){return a+x.net;},0),last.ytdNet,0.001);
+  st.periods.forEach(function(x){eq(mode+' '+f+' period '+x.number+' cashflow',x.lines.reduce(function(a,l){return a+l.amount;},0),x.net,0.001);});
+ });
+});
+var inc=E.statement({mode:'inside',amount:60000,unit:'year',erInclusive:false},'month');
+eq('NI paid on top does not reduce take-home',inc.annualNet,E.calc({mode:'inside',amount:60000,unit:'year',erInclusive:false}).net,0.03);
+eq('monthly count',inc.count,12);
+eq('weekly count',E.statement({mode:'perm',amount:50000,unit:'year'},'week').count,52);
+eq('4-weekly count',E.statement({mode:'perm',amount:50000,unit:'year'},'fourweek').count,13);
 console.log(fails ? fails + ' FAILED' : 'ALL PASSED');
 process.exit(fails ? 1 : 0);
