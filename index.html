@@ -72,6 +72,16 @@ td.best{color:var(--ok);font-weight:700}
 .hh{border-top:3px solid var(--cream)}
 .hide{display:none!important}
 @media(min-width:850px){.wrap{max-width:640px}.hero .big{font-size:52px}}
+
+.person-cards{display:grid;gap:10px;margin-bottom:14px;grid-template-columns:1fr}
+.person-card{min-width:0;text-align:left;background:var(--s1);color:var(--cream);border:1px solid var(--hair);padding:14px;cursor:pointer;font:14px var(--bd)}
+.person-card[aria-pressed=true]{border-color:var(--red)}.person-card span{display:block;color:var(--dim);font-size:12px}.person-card b{display:block;font:700 30px var(--hd);margin:6px 0}.person-card small{font:14px var(--bd)}.person-card .edit-label{margin-top:8px;color:var(--cream)}
+.slip-controls{display:grid;grid-template-columns:1fr;gap:0}.statement{margin-top:12px;font-size:12px;table-layout:fixed}.statement th:first-child{width:44%}.statement th{font-size:10px;letter-spacing:0}.statement td{padding:9px 3px;font-variant-numeric:tabular-nums}.netrow{font-weight:700;border-top:2px solid var(--red)}
+@media(max-width:360px){.grid5{grid-template-columns:repeat(3,minmax(0,1fr))}.grid5 b{font-size:13px;word-break:normal}.statement{font-size:10.5px}.statement th{font-size:9px}.stats b{font-size:17px}}
+@media(min-width:700px){.person-cards{grid-template-columns:1fr 1fr}.wrap:has(.household-overview){max-width:760px}}
+#report{display:none}.report-open #app{display:none}.report-open #report{display:block}.report-controls{max-width:720px;margin:20px auto;padding:16px}.report-controls .btn{margin-bottom:8px}.report-page{background:#fff;color:#171717;max-width:800px;margin:20px auto;padding:28px}.report-page h1{font:700 26px var(--hd)}.report-page h2,.report-page .hint,.report-page .disc,.report-page th{color:#555}.report-page .brand{color:#171717}.report-page .brand svg [fill="#F0EDE8"]{fill:#171717}.report-page header{flex-wrap:wrap}.report-page .disc{border-color:#ddd}.report-page td,.report-page th{border-color:#ddd}.report-summary{display:flex;gap:12px;flex-wrap:wrap;padding:12px 0;border-top:3px solid #C8221A}.report-assumptions{font-size:13px;padding-left:18px}.report-person{margin-bottom:30px}.report-method{font-size:12px}.report-page .statement{font-size:13px}.report-page .statement th{font-size:11px}
+@media(max-width:450px){.report-page{padding:16px}.report-page .statement{font-size:10.5px}.report-page .statement th{font-size:9px}}
+@media print{@page{size:A4;margin:14mm}body{padding:0;background:#fff;color:#171717;font-size:11px}#app,.report-controls{display:none!important}#report{display:block!important}.report-page{margin:0;padding:0;max-width:none}.report-page header{padding:0 0 12px}.report-person+.report-person{break-before:page}.report-method{break-before:page}tr{break-inside:avoid}h1,h2{break-after:avoid}.report-page .statement{font-size:11px}.report-page table{font-size:10px}.report-page h1{font-size:22px;margin:10px 0}.report-page h2{margin:12px 0 5px}.report-assumptions{font-size:10px;columns:2;column-gap:24px}.report-assumptions li{break-inside:avoid}.report-page .hint{font-size:10px;line-height:1.4}.report-page p{margin:7px 0}.report-page th,.report-page td{padding:4px}.report-page .disc a{color:#171717}}
 </style></head><body><div id="app"></div><script>/* pay.brb calculation engine. Pure functions, no DOM. All amounts are annual GBP unless stated.
    Rates live in RATES only: next April, edit that object and re-run test.js. */
 (function (root) {
@@ -347,7 +357,35 @@ td.best{color:var(--ok);font-weight:700}
     return { people: rs, net: net, totalTax: tot, gross: gross, effective: gross ? tot / gross : 0 };
   }
 
-  var api = { RATES: RATES, calc: calc, calcAt: calcAt, household: household, solveForNet: solveForNet, incomeTax: incomeTax,
+  /* Planning statement, not a payroll calculator. Split rounded annual cash flows
+     across a full tax year; penny remainders land in the final period. */
+  function statement(p, frequency) {
+    var r = calc(p), count = {month:12, week:52, fourweek:13}[frequency] || 12;
+    var er = (p.mode === 'ltd' || (p.mode === 'inside' && p.erInclusive !== false)) ? r.extra.employerNI : 0;
+    var employeeNI = (p.mode === 'ltd' || p.mode === 'inside') ? r.ni - er : r.ni;
+    var flows = [[p.mode === 'perm' ? 'Gross salary' : 'Income / invoice (excl. VAT)', r.annualGross]];
+    var surplus = vatSurplus(p, r.annualGross);
+    if ((p.mode === 'sole' || p.mode === 'ltd') && surplus) flows.push(['VAT flat rate surplus', surplus]);
+    if (p.expenses && p.mode !== 'perm') flows.push([p.mode === 'inside' ? 'Allowable expenses removed' : 'Business / company expenses', -p.expenses]);
+    if (p.mode === 'ltd' && r.employerPension) flows.push(['Company pension', -r.employerPension]);
+    if (er) flows.push(['Employer NI from income', -er]);
+    if (p.mode === 'ltd') flows.push(['Corporation tax reserve', -r.ct]);
+    flows.push([p.mode === 'sole' || p.mode === 'ltd' ? 'Income tax reserve' : 'Income tax estimate', -r.tax]);
+    if (p.mode === 'ltd') flows.push(['Dividend tax reserve', -r.divTax]);
+    flows.push([p.mode === 'sole' ? 'Class 4 NI reserve' : 'Employee NI estimate', -employeeNI]);
+    flows.push(['Personal pension contribution', -r.pensionPersonal], ['Student / postgraduate loan', -r.sl]);
+    var totals = flows.map(function(x){return Math.round(x[1]*100);});
+    function allocated(c, n) {var part=Math.trunc(c/count); return n===count ? c-part*(count-1) : part;}
+    var ytd=totals.map(function(){return 0;}), periods=[];
+    for(var n=1;n<=count;n++){
+      var net=0, cumulative=0;
+      var lines=flows.map(function(x,i){var cents=allocated(totals[i],n);ytd[i]+=cents;net+=cents;cumulative+=ytd[i];return {label:x[0],amount:cents/100,ytd:ytd[i]/100};});
+      periods.push({number:n,lines:lines,net:net/100,ytdNet:cumulative/100});
+    }
+    return {frequency:frequency,count:count,periods:periods,annualNet:totals.reduce(function(a,b){return a+b;},0)/100,result:r};
+  }
+
+  var api = { RATES: RATES, statement: statement, calc: calc, calcAt: calcAt, household: household, solveForNet: solveForNet, incomeTax: incomeTax,
     class1: class1, class4: class4, employerNI: employerNI, corpTax: corpTax, studentLoan: studentLoan, toAnnual: toAnnual,
     periods: periods, workdays: workdays, r2: r2 };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.BRBPAY = api;
@@ -361,7 +399,7 @@ var PER=[['hour','Hour'],['day','Day'],['week','Week'],['month','Month'],['year'
 function newPerson(mode){return{mode:mode||'ltd',amount:mode==='perm'?60000:500,unit:mode==='perm'?'year':'day',dpw:5,hoursPerDay:7.5,holidayDays:25,bankHols:8,sickDays:0,
  expenses:0,vatRegistered:false,vatFlat:false,frsRate:14.5,salaryMode:'optimise',salaryCustom:12570,pension:0,pensionUnit:'amt',pensionMethod:'net',employerPension:0,
  studentLoan:'none',pg:false,erInclusive:true};}
-var S={tab:'calc',joint:false,who:0,period:'month',people:[newPerson('ltd'),newPerson('perm')],tgt:{amount:4000,unit:'month'}};
+var S={tab:'calc',joint:false,who:0,period:'month',slipFrequency:'month',slipNumber:1,people:[newPerson('ltd'),newPerson('perm')],tgt:{amount:4000,unit:'month'}};
 try{var sv=JSON.parse(localStorage.getItem(KEY)||'null');if(sv&&sv.people){S=Object.assign(S,sv);S.people=sv.people.map(function(p){return Object.assign(newPerson(p.mode),p)});S.tgt=sv.tgt||S.tgt;}}catch(e){}
 try{var q=new URLSearchParams(location.search);if(q.get('tab'))S.tab=q.get('tab');if(q.get('mode'))S.people[0].mode=q.get('mode');if(q.get('amount'))S.people[0].amount=+q.get('amount');if(q.get('unit'))S.people[0].unit=q.get('unit');if(q.get('joint')){S.joint=true;S.who=+q.get('who')||0}}catch(e){}
 function save(){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}}
@@ -398,6 +436,18 @@ function formHTML(p){
  h+='</details><details><summary>Student loan</summary>'+sel('studentLoan','Plan',[['none','None'],['1','Plan 1'],['2','Plan 2'],['4','Plan 4'],['5','Plan 5']],p.studentLoan)+chk('pg','Postgraduate loan too',p.pg)+'</details>';
  return h;}
 
+/* Period statements and device-local print reports. */
+function modeLabel(p){return MODES.filter(function(m){return m[0]===p.mode})[0][1]}
+function periodName(n,f){return f==='month'?['April','May','June','July','August','September','October','November','December','January','February','March'][n-1]+' (period '+n+')':(f==='week'?'Week ':'4-week period ')+n}
+function periodTable(st,n){var row=st.periods[n-1];return '<table class="statement"><thead><tr><th>Cash flow</th><th>This period</th><th>Year to date</th></tr></thead><tbody>'+row.lines.map(function(l){return '<tr><td>'+esc(l.label)+'</td><td>'+gbp(l.amount,2)+'</td><td>'+gbp(l.ytd,2)+'</td></tr>'}).join('')+'<tr class="netrow"><td>Take-home</td><td>'+gbp(row.net,2)+'</td><td>'+gbp(row.ytdNet,2)+'</td></tr></tbody></table>'}
+function statementNote(p){return 'Annual planning estimate, split evenly across a full tax year. Not an actual payslip or PAYE calculation. '+(p.mode==='sole'||p.mode==='ltd'?'Tax and loan lines are reserves, not payroll deductions. ':'Real PAYE, NI and loan deductions depend on pay dates, tax code, cumulative earnings and payroll rounding. ')+'YTD runs from estimated period 1, not today. Final period adjusts pennies. Personal pension relief is reflected in annual tax; actual refunds may arrive later.'}
+function slipHTML(p){var st=E.statement(p,S.slipFrequency),n=Math.min(S.slipNumber,st.count);var options=st.periods.map(function(x){return[x.number,periodName(x.number,S.slipFrequency)]});return '<h2>Period statement'+(S.joint?' · Person '+(S.who===0?'A':'B'):'')+'</h2><div class="card"><div class="slip-controls"><div><label for="slip_frequency">Frequency</label><select id="slip_frequency" data-slip="frequency">'+opts([['month','Monthly'],['week','Weekly'],['fourweek','4-weekly']],S.slipFrequency)+'</select></div><div><label for="slip_number">Tax-year period</label><select id="slip_number" data-slip="number">'+opts(options,n)+'</select></div></div><p class="hint">'+esc(statementNote(p))+'</p>'+periodTable(st,n)+'<details><summary>All periods</summary><div class="scroll"><table><thead><tr><th>Period</th><th>Take-home</th><th>YTD net</th></tr></thead><tbody>'+st.periods.map(function(x){return '<tr><td>'+esc(periodName(x.number,S.slipFrequency))+'</td><td>'+gbp(x.net,2)+'</td><td>'+gbp(x.ytdNet,2)+'</td></tr>'}).join('')+'</tbody></table></div></details></div>'}
+function householdOverview(){var hh=E.household(S.people);return '<section class="household-overview"><div class="hero hh"><div class="k">Household take-home · per month</div><div class="big">'+gbp(hh.net/12)+'</div><div class="sub">'+gbp(hh.net)+' a year between you · independently taxed</div></div><div class="person-cards">'+S.people.map(function(p,i){var r=hh.people[i];return '<button class="person-card" type="button" data-who="'+i+'" aria-pressed="'+(S.who===i)+'"><span class="k">Person '+(i===0?'A':'B')+' · '+esc(modeLabel(p))+'</span><b>'+gbp(r.net/12)+'<small> / month</small></b><span>'+gbp(r.annualGross)+' gross · '+gbp(r.net)+' net a year</span><span class="edit-label">'+(S.who===i?'Editing below':'Edit this person')+'</span></button>'}).join('')+'</div></section>'}
+function assumptionsHTML(p){var r=E.calc(p);var a=[['Pay type',modeLabel(p)],['Entered income',gbp(p.amount,2)+' '+(UNITS.filter(function(x){return x[0]===p.unit})[0][1])],['Annual income',gbp(r.annualGross,2)],['Working pattern',p.dpw+' days/week, '+p.hoursPerDay+' hours/day'+(p.mode==='perm'?'':'; '+p.holidayDays+' holiday, '+p.bankHols+' bank holiday, '+p.sickDays+' gap days; '+r.workdays+' paid days')],['Expenses',gbp(p.expenses||0)+' per year'],['Personal pension',p.pension+(p.pensionUnit==='pct'?'%':' GBP/year')+'; '+(p.mode==='perm'?p.pensionMethod:'relief at source')],['Employer/company pension',p.employerPension+(p.pensionUnit==='pct'?'%':' GBP/year')],['Student loan',p.studentLoan+'; postgraduate '+(p.pg?'yes':'no')]];
+if(p.mode==='inside')a.push(['Employer NI',p.erInclusive!==false?'Included in entered rate':'Paid on top by client']);if(p.mode==='ltd')a.push(['Director salary',p.salaryMode+(p.salaryMode==='custom'?' '+gbp(p.salaryCustom):'')+'; calculated '+gbp(r.extra.salary)]);if(p.mode==='sole'||p.mode==='ltd')a.push(['VAT',p.vatRegistered?(p.vatFlat?'Flat rate '+p.frsRate+'%':'Registered, no flat-rate surplus'):'Not registered']);return '<ul class="report-assumptions">'+a.map(function(x){return '<li><b>'+esc(x[0])+':</b> '+esc(x[1])+'</li>'}).join('')+'</ul>'}
+function reportHTML(){var people=S.joint?S.people:[P()];return '<header><div class="brand">pay.'+LOGO+'</div><span>Scenario report · '+R.year+'</span></header><p>Generated '+esc(new Date().toLocaleDateString('en-GB'))+' · England · annual planning estimate</p>'+(S.joint?'<h1>Household take-home '+gbp(E.household(people).net/12)+' / month</h1><p>'+gbp(E.household(people).net)+' a year. Each person is taxed separately.</p>':'')+people.map(function(p,i){var st=E.statement(p,S.slipFrequency),n=Math.min(S.slipNumber,st.count);return '<section class="report-person"><h1>'+(S.joint?'Person '+(i===0?'A':'B')+' · ':'')+esc(modeLabel(p))+'</h1><div class="report-summary"><b>'+gbp(st.result.net,2)+' net / year</b><span>'+gbp(st.result.net/12,2)+' net / month</span></div><h2>Scenario inputs</h2>'+assumptionsHTML(p)+'<h2>'+esc(periodName(n,S.slipFrequency))+' · '+esc(S.slipFrequency==='fourweek'?'4-weekly':S.slipFrequency==='week'?'Weekly':'Monthly')+'</h2><p class="hint">'+esc(statementNote(p))+'</p>'+periodTable(st,n)+'<h2>Full tax-year schedule</h2><table><thead><tr><th>Period</th><th>Take-home</th><th>YTD net</th></tr></thead><tbody>'+st.periods.map(function(x){return '<tr><td>'+esc(periodName(x.number,S.slipFrequency))+'</td><td>'+gbp(x.net,2)+'</td><td>'+gbp(x.ytdNet,2)+'</td></tr>'}).join('')+'</tbody></table>'+st.result.flags.map(function(f){return '<p>'+esc(f)+'</p>'}).join('')+'</section>'}).join('')+'<section class="report-method"><h2>Method and limits</h2><p>6 April 2026 to 5 April 2027. Standard 1257L tax code, NI category A, no other income or benefits. Full-year annual model, not payroll software. Ltd: all post-tax company profit distributed, no Employment Allowance. Sole trader: Class 4 NI; payments on account excluded. Inside IR35: public-sector deemed-payment model, no 5% allowance; employer NI treatment as entered. Pension annual allowance taper, carry forward and money purchase allowance are not modelled.</p><p>Rates last checked '+R.checked+'. See About in pay.brb for HMRC sources. Student loans, relief at source pension refunds and Self Assessment payments can differ in timing from these reserves.</p>'+DISC+'</section>'}
+function openReport(){var existing=$('#report');if(existing)existing.remove();var el=document.createElement('div');el.id='report';el.innerHTML='<div class="report-controls"><button class="btn" data-act="print">Print / save PDF</button><button class="btn ghost" data-act="close-report">Back to calculator</button><p class="hint">On iPhone: tap Print / save PDF, expand the print preview with two fingers, then Share → Save to Files. The report is created on this device.</p></div><div class="report-page">'+reportHTML()+'</div>';document.body.appendChild(el);document.body.classList.add('report-open');window.scrollTo(0,0)}
+
 /* ---------- results ---------- */
 function perTxt(r,k){var v=r.perPeriod[k];return gbp(v,k==='hour'?2:k==='day'||k==='week'?0:0)}
 function heroHTML(p,r,who){
@@ -416,9 +466,6 @@ function linesHTML(r){
  return h+'<li class="tot"><span>Take-home</span><span class="n">'+gbp(r.net)+'</span></li></ul>';}
 function resultsHTML(){
  var h='';
- if(S.joint){var hh=E.household(S.people),f=function(x){return{year:x,month:x/12,week:x/52}};
-  var per=S.period==='day'||S.period==='hour'?'month':S.period;var hv=f(hh.net)[per];
-  h+='<div class="hero hh"><div class="k">Household take-home \u00b7 per '+per+'</div><div class="big">'+gbp(hv)+'</div><div class="sub">'+gbp(hh.gross)+' gross between you, '+gbp(hh.totalTax)+' tax and NI ('+pc(hh.effective)+')</div><div class="grid5" style="grid-template-columns:repeat(3,1fr)"><div><b>'+gbp(hh.net/52)+'</b><span>Week</span></div><div><b>'+gbp(hh.net/12)+'</b><span>Month</span></div><div><b>'+gbp(hh.net)+'</b><span>Year</span></div></div></div>';}
  var p=P(),r=E.calc(p);
  h+=heroHTML(p,r,S.joint?(S.who===0?'Person A':'Person B'):'Take-home');
  h+='<div class="stats"><div><b>'+gbp(r.totalTax)+'</b><span>Tax and NI a year</span></div><div><b>'+pc(r.effective)+'</b><span>Average rate</span></div><div><b>'+pc(r.marginal,0)+'</b><span>On the next \u00a31</span></div></div>';
@@ -427,7 +474,7 @@ function resultsHTML(){
  if(r.pensionGross>0)h+='<div class="card"><b>Pension going in</b><p class="hint" style="margin:4px 0 0">'+gbp(r.pensionGross)+' a year in total (you '+gbp(r.pensionPersonal)+(r.employerPension?', employer '+gbp(r.employerPension):'')+(p.mode==='perm'&&p.pensionMethod==='ras'?', plus 20% added by provider':'')+').</p></div>';
  if(p.mode==='inside'&&r.extra)h+='<div class="card"><b>Client cost</b><p class="hint" style="margin:4px 0 0">Employer NI on the deemed payment is '+gbp(r.extra.employerNI)+' a year'+(p.erInclusive!==false?', taken out of your fee.':', paid by the client on top.')+'</p></div>';
  if(p.mode==='ltd'&&r.extra)h+='<div class="card"><b>Company</b><p class="hint" style="margin:4px 0 0">Salary '+gbp(r.extra.salary)+', employer NI '+gbp(r.extra.employerNI)+', profit '+gbp(r.extra.profit)+', corporation tax '+gbp(r.ct)+', dividends '+gbp(r.extra.dividends)+'. All profit assumed paid out each year.</p></div>';
- h+='<button class="btn ghost" type="button" data-act="share">Share or copy summary</button>';
+ h+=slipHTML(p)+'<button class="btn" type="button" data-act="report">Preview / save PDF report</button><p class="hint">Includes '+(S.joint?'both people and the household total':'this scenario')+', period schedule and assumptions. Nothing is uploaded.</p><button class="btn ghost" type="button" data-act="share">Share or copy summary</button>';
  return h;}
 
 /* ---------- compare ---------- */
@@ -478,14 +525,14 @@ function main(){
  var m=$('#main'),h='';
  if(S.tab==='calc'){
   h+='<div class="seg" role="group" aria-label="Who"><button type="button" data-joint="0" aria-pressed="'+!S.joint+'">Just me</button><button type="button" data-joint="1" aria-pressed="'+S.joint+'">Joint income</button></div>';
-  if(S.joint)h+='<div class="seg" role="tablist" aria-label="Person"><button type="button" data-who="0" aria-selected="'+(S.who===0)+'">Person A</button><button type="button" data-who="1" aria-selected="'+(S.who===1)+'">Person B</button></div>';
+  if(S.joint)h+='<div id="household">'+householdOverview()+'</div><div class="seg" role="tablist" aria-label="Person"><button type="button" data-who="0" aria-selected="'+(S.who===0)+'">Person A</button><button type="button" data-who="1" aria-selected="'+(S.who===1)+'">Person B</button></div>';
   h+='<div class="card" id="form">'+formHTML(P())+'</div><div id="res"></div>';}
  else if(S.tab==='cmp')h='<div id="cmp"></div>';
  else if(S.tab==='tgt')h=targetHTML();
  else h=infoHTML();
  m.innerHTML=h;paint();}
 function paint(){
- if(S.tab==='calc'){$('#res').innerHTML=resultsHTML();var p=P();if(p.mode!=='perm'){var hh=$('#wdhint');if(hh)hh.textContent='Working days a year: '+E.workdays(p)+'.'}}
+ if(S.tab==='calc'){if(S.joint&&$('#household'))$('#household').innerHTML=householdOverview();$('#res').innerHTML=resultsHTML();var p=P();if(p.mode!=='perm'){var hh=$('#wdhint');if(hh)hh.textContent='Working days a year: '+E.workdays(p)+'.'}}
  else if(S.tab==='cmp')$('#cmp').innerHTML=compareHTML();
  else if(S.tab==='tgt')$('#tres').innerHTML=targetRes();}
 function setField(el){
@@ -493,13 +540,13 @@ function setField(el){
  var p=P();p[k]=(k==='frsRate')?parseFloat(v):v;save();}
 document.addEventListener('input',function(e){var el=e.target;if(el.dataset.k&&el.type!=='checkbox'&&el.tagName!=='SELECT'){setField(el);paint()}
  if(el.dataset.tk){S.tgt[el.dataset.tk]=el.dataset.tk==='amount'?el.value:el.value;save();$('#tres').innerHTML=targetRes()}});
-document.addEventListener('change',function(e){var el=e.target;
+document.addEventListener('change',function(e){var el=e.target;if(el.dataset.slip){if(el.dataset.slip==='frequency'){S.slipFrequency=el.value;S.slipNumber=1}else S.slipNumber=+el.value;save();paint();return}
  if(el.dataset.k&&(el.type==='checkbox'||el.tagName==='SELECT')){setField(el);var structural=['vatRegistered','vatFlat','salaryMode','unit'].indexOf(el.dataset.k)>-1;
   if(el.dataset.k==='unit'){paint();return}
   if(structural){var f=$('#form');f.innerHTML=formHTML(P());paint();var nf=document.getElementById(el.id);if(nf)nf.focus();}else paint();}
  if(el.dataset.tk){S.tgt[el.dataset.tk]=el.value;save();$('#tres').innerHTML=targetRes()}});
 document.addEventListener('click',function(e){var b=e.target.closest('button');if(!b)return;
- if(b.dataset.tab){S.tab=b.dataset.tab;save();shell();main();return}
+ if(b.dataset.act==='report'){openReport();return}if(b.dataset.act==='close-report'){$('#report').remove();document.body.classList.remove('report-open');return}if(b.dataset.act==='print'){window.print();return}if(b.dataset.tab){S.tab=b.dataset.tab;save();shell();main();return}
  if(b.dataset.mode){var p=P(),old=p.mode;if(old!==b.dataset.mode){var wasPerm=old==='perm',nowPerm=b.dataset.mode==='perm';p.mode=b.dataset.mode;
    if(wasPerm!==nowPerm){p.unit=nowPerm?'year':'day';p.amount=nowPerm?60000:500;p.pension=0;p.employerPension=0;p.pensionMethod='net'}
    if(!nowPerm&&p.pensionMethod!=='net')p.pensionMethod='net';save();$('#form').innerHTML=formHTML(p);paint()}return}
