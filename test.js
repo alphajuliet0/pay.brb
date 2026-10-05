@@ -121,4 +121,31 @@ eq('year basis stays exact 50k', E.calc({ mode: 'perm', amount: 50000, unit: 'ye
 });
 var sp = pay(50000);
 eq('summary deductions 50k payslip', sp.summary.filter(function (x) { return x[0] === 'Total deductions'; })[0][1], 10478.6);
+// Scotland, tax codes, NI letters, marriage allowance. LTTM figures were read from listentotaxman.com on 6 Oct 2026.
+function P2(o) { return E.calc(Object.assign({ mode: 'perm', amount: 50000, unit: 'year', taxBasis: 'year' }, o)); }
+eq('scot 50k tax (LTTM 8,982.05)', P2({ region: 'scot' }).tax, 8982.05);
+eq('scot 50k net (LTTM 38,023.55)', P2({ region: 'scot' }).net, 38023.55);
+eq('scot 110k tax (LTTM net 68,307.35)', P2({ region: 'scot', amount: 110000 }).net, 68307.35);
+eq('scot 50k payslip basis', P2({ region: 'scot', taxBasis: 'payslip' }).tax, 8978.27);
+eq('scot band rows sum to tax', P2({ region: 'scot' }).tinfo.bands.reduce(function (a, b) { return a + b[1]; }, 0), 8982.05);
+eq('scot top rate 48% above 125,140 (200k)', P2({ region: 'scot', amount: 200000 }).tinfo.bands.slice(-1)[0][0] * 100, 48);
+eq('code 1100L payslip (LTTM 8,056.40)', P2({ taxCode: '1100L', taxBasis: 'payslip' }).tax, 8056.4);
+eq('code 1100L allowance (LTTM 11,009)', P2({ taxCode: '1100L', taxBasis: 'payslip' }).tinfo.pa, 11009);
+eq('code BR (LTTM 10,000)', P2({ taxCode: 'BR' }).tax, 10000);
+eq('code D0 40%', P2({ taxCode: 'D0' }).tax, 20000);
+eq('code NT no tax', P2({ taxCode: 'NT' }).tax, 0);
+eq('code K100 payslip (LTTM 12,863.60)', P2({ taxCode: 'K100', taxBasis: 'payslip' }).tax, 12863.6);
+eq('code S1257L prefix accepted', P2({ taxCode: 'S1257L' }).tax, 7486);
+eq('bad code falls back to standard', P2({ taxCode: 'XYZ' }).tax, 7486);
+eq('code ignored for sole trader', E.calc({ mode: 'sole', amount: 50000, unit: 'year', taxCode: 'BR' }).tax, E.calc({ mode: 'sole', amount: 50000, unit: 'year' }).tax);
+eq('NI letter B employee NI (LTTM 692.46)', P2({ niLetter: 'B' }).ni, 692.46, 0.011);
+eq('NI letter C employee NI nil', P2({ niLetter: 'C' }).ni, 0);
+eq('NI letter C employer NI still 15%', P2({ niLetter: 'C' }).extra.employerNI, 6750);
+eq('NI letter H employer NI nil under 50,270', P2({ niLetter: 'H' }).extra.employerNI, 0);
+eq('NI letter J employee NI 2%', P2({ niLetter: 'J' }).ni, 748.6);
+eq('marriage allowance receive cuts tax by 252', P2({ ma: 'get' }).tax, 7486 - 252);
+eq('marriage allowance receive refused at 60k', P2({ ma: 'get', amount: 60000 }).tax, P2({ amount: 60000 }).tax);
+eq('marriage allowance give at 12,000', P2({ ma: 'give', amount: 12000 }).tax, 138);
+eq('marriage allowance give refused at 30k', P2({ ma: 'give', amount: 30000 }).tax, P2({ amount: 30000 }).tax);
+eq('defaults unchanged', P2({}).tax, 7486);
 process.exit(fails ? 1 : 0);
