@@ -19,5 +19,4 @@ UK pay calculator by bigredbox. Permanent salary, sole trader, Ltd outside IR35 
 - Sources (gov.uk): tax relief for residential landlords how it's worked out; property and trading allowances; property, savings and dividend rates technical note (26 Nov 2025); form 17 for joint property.
 - Tests in `test.js` use the gov.uk landlord examples, the technical note annex example and hand-worked cases.
 
-
-Deploy retrigger 6 Oct.
+Region, tax code, NI letter and marriage allowance (6 Oct 2026): Scotland uses the six Scottish bands (gov.uk rates and thresholds for employers 2026 to 2027). A tax code (1257L, K, 0T, BR, D0, D1, NT) replaces the allowance calculation for Permanent and Inside IR35. NI letters A, B, C, H, J, M, V, Z follow the gov.uk class 1 tables. Marriage allowance is 1,260 given or a 252 tax reduction received, with eligibility checks.
