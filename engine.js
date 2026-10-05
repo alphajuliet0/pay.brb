@@ -67,10 +67,12 @@
   /* ---- Income tax ----
      nonSav: employment/trading income after any net-pay or sacrifice deduction.
      div: dividends. ras: GROSS relief-at-source pension contribution (extends bands, lowers adjusted net income). */
-  function incomeTax(nonSav, div, ras) {
+  function incomeTax(nonSav, div, ras, paye) {
     ras = ras || 0; div = div || 0;
     var ani = nonSav + div - ras;
     var pa = pos(RATES.pa - pos(ani - RATES.taperStart) / 2);
+    /* Payslip basis: HMRC payroll tables give tax-free pay of code x 10 + 9 (1257L = 12,579). Year-end liability uses the exact allowance. */
+    if (paye && pa >= 10) pa = Math.floor(pa / 10) * 10 + 9;
     var tn = pos(nonSav - pa);
     var paLeft = pos(pa - nonSav);
     var td = pos(div - paLeft);
@@ -171,7 +173,7 @@
     if (m === 'net') { taxable = G - e; }
     else if (m === 'sacrifice') { taxable = G - e; niPay = G - e; }
     else if (m === 'ras') { ras = e / (1 - RATES.pension.rasBasic); }
-    var t = incomeTax(taxable, 0, ras), ni = class1(niPay);
+    var t = incomeTax(taxable, 0, ras, p.taxBasis === 'payslip'), ni = class1(niPay);
     var slBase = m === 'sacrifice' ? G - e : G;
     var sl = studentLoan(slBase, p.studentLoan, p.pg);
     var net = G - e - t.incomeTax - ni - sl;
@@ -253,7 +255,7 @@
     } else { ddp = pos(base); er = employerNI(ddp); }   // employer NI paid by the client on top
     var e = pensionAmount(p.pension, p.pensionUnit, ddp);
     var ras = e / (1 - RATES.pension.rasBasic);
-    var t = incomeTax(ddp, 0, ras), ni = class1(ddp);
+    var t = incomeTax(ddp, 0, ras, p.taxBasis === 'payslip'), ni = class1(ddp);
     var sl = studentLoan(ddp, p.studentLoan, p.pg);
     var net = ddp - t.incomeTax - ni - sl - e;
     var L = [['Invoice (excl. VAT)', T, 'info']];
@@ -265,6 +267,56 @@
     if (sl) L.push(['Student loan', -sl, 'deduct']);
     return { net: net, tax: t.incomeTax, ni: ni + (inclusive ? er : 0), sl: sl, divTax: 0, ct: 0, pensionPersonal: e, pensionGross: ras + pe,
       employerPension: pe, lines: L, tinfo: t, tin: { np: ddp, div: 0, ras: ras }, base: T, employerCost: T + (inclusive ? 0 : er), extra: { ddp: ddp, employerNI: er } };
+  }
+
+
+  /* ---- Pay summary table: [label, annual amount, kind]. kind: 'info' | 'sub' (band line) | 'deduct' | 'tot' | 'memo' ---- */
+  function summaryRows(p, r, annual) {
+    var t = r.tinfo, np = r.tin.np, pa = t.pa, taxable = pos(np - pa), rows = [], x = r.extra || {};
+    function band(label, v) { if (v > 0.005) rows.push([label, v, 'sub']); }
+    function bands() {
+      band('Tax at 20%', t.basic); band('Tax at 40%', t.higher); band('Tax at 45%', t.additional);
+    }
+    if (p.mode === 'perm') {
+      rows.push(['Gross pay', annual, 'info'], ['Tax-free allowance', pa, 'info'], ['Total taxable', taxable, 'info']);
+      rows.push(['Income tax', r.tax, 'deduct']); bands();
+      rows.push(['National Insurance', r.ni, 'deduct']);
+      if (r.pensionPersonal) rows.push(['Pension (you)', r.pensionPersonal, 'deduct']);
+      if (r.sl) rows.push(['Student loan', r.sl, 'deduct']);
+      rows.push(['Total deductions', annual - r.net, 'tot'], ['Net pay', r.net, 'tot']);
+      rows.push(['Employer NI', x.employerNI || 0, 'memo']);
+    } else if (p.mode === 'inside') {
+      rows.push(['Invoice (excl. VAT)', annual, 'info']);
+      if (r.employerCost !== annual || (p.erInclusive !== false && x.employerNI)) { if (p.erInclusive !== false && x.employerNI) rows.push(['Employer NI taken from fee', x.employerNI, 'deduct']); }
+      rows.push(['Deemed payment', x.ddp, 'info'], ['Tax-free allowance', pa, 'info'], ['Total taxable', taxable, 'info']);
+      rows.push(['Income tax', r.tax, 'deduct']); bands();
+      rows.push(['National Insurance', r.ni - (p.erInclusive !== false ? (x.employerNI || 0) : 0), 'deduct']);
+      if (r.pensionPersonal) rows.push(['Pension (you)', r.pensionPersonal, 'deduct']);
+      if (r.sl) rows.push(['Student loan', r.sl, 'deduct']);
+      rows.push(['Net pay', r.net, 'tot']);
+    } else if (p.mode === 'sole') {
+      rows.push(['Turnover (excl. VAT)', annual, 'info']);
+      if (p.expenses) rows.push(['Business expenses', p.expenses, 'deduct']);
+      rows.push(['Profit', x.profit, 'info'], ['Tax-free allowance', pa, 'info'], ['Total taxable', taxable, 'info']);
+      rows.push(['Income tax', r.tax, 'deduct']); bands();
+      rows.push(['Class 4 NI', r.ni, 'deduct']);
+      if (r.pensionPersonal) rows.push(['Pension (you)', r.pensionPersonal, 'deduct']);
+      if (r.sl) rows.push(['Student loan', r.sl, 'deduct']);
+      rows.push(['Net income', r.net, 'tot']);
+    } else {
+      var ernic = x.employerNI || 0;
+      rows.push(['Contract income (excl. VAT)', annual, 'info']);
+      rows.push(['Corporation tax', r.ct, 'deduct'], ['Employer NI', ernic, 'deduct']);
+      rows.push(['Director salary', x.salary, 'info'], ['Dividends', x.dividends, 'info']);
+      rows.push(['Tax-free allowance', pa, 'info'], ['Taxable salary', taxable, 'info']);
+      rows.push(['Income tax on salary', r.tax, 'deduct']);
+      if (r.divTax) rows.push(['Dividend tax', r.divTax, 'deduct']);
+      if (r.ni - ernic > 0.005) rows.push(['Employee NI', r.ni - ernic, 'deduct']);
+      if (r.pensionPersonal) rows.push(['Pension (you)', r.pensionPersonal, 'deduct']);
+      if (r.sl) rows.push(['Student loan', r.sl, 'deduct']);
+      rows.push(['Net take-home', r.net, 'tot']);
+    }
+    return rows;
   }
 
   function calcAt(p, annual) {
@@ -288,6 +340,7 @@
     r.grossPeriods = periods(annual, p);
     r.workdays = p.mode === 'perm' ? null : workdays(p);
     var ani = r.tinfo.ani;
+    r.summary = summaryRows(p, r, annual);
     r.flags = [];
     if (ani > RATES.taperStart && ani < RATES.additionalAt) r.flags.push('Your income is in the £100,000 to £125,140 band where the personal allowance is withdrawn, an effective marginal rate near 60%. A pension contribution here can recover a lot of it.');
     if (r.pensionGross > RATES.pension.annualAllowance) r.flags.push('Total pension contributions are above the £60,000 annual allowance (carry forward may apply).');
