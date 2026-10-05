@@ -569,7 +569,7 @@ var E=window.BRBPAY,R=E.RATES,KEY='paybrb.v1';
 var MODES=[['perm','Permanent'],['sole','Sole trader'],['ltd','Ltd outside IR35'],['inside','Inside IR35']];
 var UNITS=[['hour','per hour'],['day','per day'],['week','per week'],['month','per month'],['year','per year']];
 var PER=[['hour','Hour'],['day','Day'],['week','Week'],['month','Month'],['year','Year']];
-var DEFAULT_BASIS='year';
+var DEFAULT_BASIS='payslip';
 function newPerson(mode){return{mode:mode||'ltd',amount:mode==='perm'?60000:500,unit:mode==='perm'?'year':'day',dpw:5,hoursPerDay:7.5,holidayDays:25,bankHols:8,sickDays:0,
  expenses:0,vatRegistered:false,vatFlat:false,frsRate:14.5,salaryMode:'optimise',salaryCustom:12570,pension:0,pensionUnit:'amt',pensionMethod:'net',employerPension:0,
  studentLoan:'none',pg:false,erInclusive:true,taxBasis:DEFAULT_BASIS,other:E.otherDefaults()};}
