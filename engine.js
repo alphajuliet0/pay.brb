@@ -28,6 +28,8 @@
       ['Limited cost business (goods under 2% of turnover or £1,000)', 16.5]
     ],
     umbrella: { margin: 39.5, levy: 0.005, stWeek: 96, ptWeek: 242, uelWeek: 967 },
+    property: { checked: '5 October 2026', allowance: 1000, reducerRate: 0.20,
+      y2728: { basic: 0.22, higher: 0.42, additional: 0.47, reducerRate: 0.22, year: '2027/28' }, regSA: 2500 },
     bankHolidays: 8, hoursPerDay: 7.5
   };
 
@@ -89,6 +91,41 @@
     return out;
   }
 
+  /* ---- Income tax from April 2027 (2027/28): property income has its own rates and is taxed after
+     other income but before dividends. Allowances are set against non-property income first.
+     np: income that is not property, savings or dividends. prop: property profit. div: dividends. ras as above.
+     Source: gov.uk technical note on property, savings and dividend rates (26 Nov 2025). */
+  function incomeTaxP(np, prop, div, ras) {
+    ras = ras || 0; div = div || 0; prop = prop || 0;
+    var ani = np + prop + div - ras;
+    var pa = pos(RATES.pa - pos(ani - RATES.taperStart) / 2);
+    var npT = pos(np - pa), paLeft = pos(pa - np);
+    var prT = pos(prop - paLeft), paLeft2 = pos(paLeft - prop);
+    var td = pos(div - paLeft2);
+    var bb = RATES.basicBand + ras, al = RATES.additionalAt + ras, pos0 = 0;
+    var P = RATES.property.y2728;
+    function stack(amt, r) {
+      var b = Math.min(amt, pos(bb - pos0)), h = Math.min(amt - b, pos(al - pos0 - b)), a = amt - b - h;
+      pos0 += amt; return b * r[0] + h * r[1] + a * r[2];
+    }
+    var out = { pa: pa, ani: ani };
+    out.npTax = stack(npT, [RATES.rate.basic, RATES.rate.higher, RATES.rate.additional]);
+    out.propTax = stack(prT, [P.basic, P.higher, P.additional]);
+    var nil = Math.min(RATES.div.allowance, td); pos0 += nil;
+    out.dividendTax = stack(td - nil, [RATES.div.basic, RATES.div.higher, RATES.div.additional]);
+    out.incomeTax = out.npTax + out.propTax;
+    out.total = out.incomeTax + out.dividendTax;
+    return out;
+  }
+
+  /* ---- Residential finance costs tax reduction (HMRC, Section 24) ----
+     Reduction = rate x the LOWEST of: finance costs (this year plus brought forward), property profits,
+     and adjusted total income above the personal allowance. Any unused finance costs carry forward. */
+  function financeReducer(fin, bf, profit, ati, rate) {
+    var avail = pos(fin) + pos(bf), base = Math.min(avail, pos(profit), pos(ati));
+    return { reduction: base * rate, used: base, carry: avail - base, available: avail };
+  }
+
   /* ---- Working pattern and unit conversion ---- */
   function workdays(p) {
     var dpw = p.dpw != null ? p.dpw : 5;
@@ -143,7 +180,7 @@
     L.push(['Income tax', -t.incomeTax, 'deduct'], ['National Insurance', -ni, 'deduct']);
     if (sl) L.push(['Student loan', -sl, 'deduct']);
     return { net: net, tax: t.incomeTax, ni: ni, sl: sl, divTax: 0, ct: 0, pensionPersonal: e, pensionGross: (m === 'ras' ? ras : e) + er,
-      employerPension: er, lines: L, tinfo: t, base: G, employerCost: G + employerNI(niPay) + er,
+      employerPension: er, lines: L, tinfo: t, tin: { np: taxable, div: 0, ras: ras }, base: G, employerCost: G + employerNI(niPay) + er,
       extra: { employerNI: employerNI(niPay) } };
   }
 
@@ -163,7 +200,7 @@
     L.push(['Income tax', -t.incomeTax, 'deduct'], ['Class 4 National Insurance', -c4, 'deduct']);
     if (sl) L.push(['Student loan', -sl, 'deduct']);
     return { net: net, tax: t.incomeTax, ni: c4, sl: sl, divTax: 0, ct: 0, pensionPersonal: e, pensionGross: ras, employerPension: 0,
-      lines: L, tinfo: t, base: T, employerCost: 0, extra: { profit: profit } };
+      lines: L, tinfo: t, tin: { np: pos(profit), div: 0, ras: ras }, base: T, employerCost: 0, extra: { profit: profit } };
   }
 
   function ltdAt(p, T, S) {
@@ -191,7 +228,7 @@
     if (e) L.push(['Pension (relief at source, you pay)', -e, 'deduct']);
     if (sl) L.push(['Student loan', -sl, 'deduct']);
     return { net: net, tax: t.incomeTax, ni: ni + ernic, sl: sl, divTax: t.dividendTax, ct: ct, pensionPersonal: e, pensionGross: ras + pe,
-      employerPension: pe, lines: L, tinfo: t, base: T, employerCost: 0, extra: { salary: S, dividends: div, profit: profit, employerNI: ernic } };
+      employerPension: pe, lines: L, tinfo: t, tin: { np: S, div: div, ras: ras }, base: T, employerCost: 0, extra: { salary: S, dividends: div, profit: profit, employerNI: ernic } };
   }
   function calcLtd(p, T) {
     var mode = p.salaryMode || 'optimise', best = null, cands;
@@ -227,7 +264,7 @@
     if (e) L.push(['Pension (relief at source, you pay)', -e, 'deduct']);
     if (sl) L.push(['Student loan', -sl, 'deduct']);
     return { net: net, tax: t.incomeTax, ni: ni + (inclusive ? er : 0), sl: sl, divTax: 0, ct: 0, pensionPersonal: e, pensionGross: ras + pe,
-      employerPension: pe, lines: L, tinfo: t, base: T, employerCost: T + (inclusive ? 0 : er), extra: { ddp: ddp, employerNI: er } };
+      employerPension: pe, lines: L, tinfo: t, tin: { np: ddp, div: 0, ras: ras }, base: T, employerCost: T + (inclusive ? 0 : er), extra: { ddp: ddp, employerNI: er } };
   }
 
   function calcAt(p, annual) {
@@ -268,9 +305,55 @@
     return hi;
   }
 
-  function household(people) {
-    var rs = people.map(calc), net = 0, tot = 0, gross = 0;
-    rs.forEach(function (r) { net += r.net; tot += r.totalTax; gross += r.annualGross; });
+  /* ---- Other income: rental property (residential, own name), other earnings, other dividends ----
+     Works out the EXTRA tax the other income causes on top of the main income, by running the whole
+     income tax calculation with and without it. Rent is non-savings income: it uses up the basic-rate band,
+     can taper the personal allowance and pushes dividends into higher bands. No NI, student loan or pension
+     is modelled on it. opts.y2728 switches property income to the April 2027 rates and ordering. */
+  function otherDefaults() { return { rent: 0, share: 100, costMode: 'exp', expenses: 0, interest: 0, capital: 0, finBf: 0, earn: 0, div: 0 }; }
+  function otherActive(o) { return !!o && (+o.rent > 0 || +o.earn > 0 || +o.div > 0); }
+  function propertyAt(o, opts) {
+    o = Object.assign(otherDefaults(), o || {});
+    var share = o.share === '' || o.share == null ? 1 : Math.min(100, pos(+o.share)) / 100;
+    var rent = pos(+o.rent) * share, exp = pos(+o.expenses) * share, intr = pos(+o.interest) * share, cap = pos(+o.capital) * share;
+    var allow = o.costMode === 'allow', A = RATES.property.allowance;
+    var deduction = allow ? Math.min(A, rent) : exp;
+    var profit = rent - deduction;
+    var out = { rent: rent, expenses: exp, interest: intr, capital: cap, allowance: allow, deduction: deduction,
+      profit: pos(profit), loss: pos(-profit), financeClaimable: allow ? 0 : intr, financeBf: allow ? 0 : pos(+o.finBf) };
+    out.fullyRelieved = allow && rent > 0 && rent <= A;
+    return out;
+  }
+  function calcAll(p, opts) {
+    opts = opts || {};
+    var r = calc(p), o = p.other;
+    var all = { gross: r.annualGross, tax: r.tax, ni: r.ni, sl: r.sl, divTax: r.divTax, ct: r.ct, net: r.net, otherCash: 0, extraTax: 0, active: false };
+    if (otherActive(o)) {
+      var pr = propertyAt(o, opts), oe = pos(+o.earn), od = pos(+o.div), tin = r.tin, rate, t1, t0 = r.tinfo;
+      var npAll = tin.np + oe, divAll = tin.div + od;
+      if (opts.y2728) { rate = RATES.property.y2728.reducerRate; t1 = incomeTaxP(npAll, pr.profit, divAll, tin.ras); }
+      else { rate = RATES.property.reducerRate; t1 = incomeTax(npAll + pr.profit, divAll, tin.ras); }
+      var ati = pos(npAll + pr.profit - t1.pa);
+      var fr = financeReducer(pr.financeClaimable, pr.financeBf, pr.profit, ati, rate);
+      var red = Math.min(fr.reduction, t1.incomeTax);
+      var dIT = t1.incomeTax - t0.incomeTax, dDiv = t1.dividendTax - t0.dividendTax;
+      var extra = dIT - red + dDiv;
+      var cash = pr.rent - pr.expenses - pr.interest - pr.capital + oe + od - extra;
+      all = { gross: r.annualGross + pr.rent + oe + od, tax: r.tax + dIT - red, ni: r.ni, sl: r.sl, divTax: r.divTax + dDiv, ct: r.ct,
+        otherCash: cash, extraTax: extra, active: true, prop: pr, reducer: fr, reduction: red, reducerRate: rate,
+        taxBeforeReduction: dIT + dDiv, incomeTaxAdded: dIT, dividendTaxAdded: dDiv, otherEarn: oe, otherDiv: od, ati: ati, y2728: !!opts.y2728,
+        loss: pr.loss, paAfter: t1.pa, ani: t1.ani };
+      all.net = r.net + cash;
+    }
+    all.totalTax = all.tax + all.ni + all.sl + all.divTax + all.ct;
+    all.effective = all.gross > 0 ? all.totalTax / all.gross : 0;
+    r.all = all;
+    return r;
+  }
+
+  function household(people, opts) {
+    var rs = people.map(function (p) { return calcAll(p, opts); }), net = 0, tot = 0, gross = 0;
+    rs.forEach(function (r) { net += r.all.net; tot += r.all.totalTax; gross += r.all.gross; });
     return { people: rs, net: net, totalTax: tot, gross: gross, effective: gross ? tot / gross : 0 };
   }
 
@@ -334,7 +417,7 @@
       deducted: r2(invoice - gross), pensionPotPlusNet: r2(net + pension) };
   }
 
-  var api = { umbrella: umbrella, RATES: RATES, statement: statement, calc: calc, calcAt: calcAt, household: household, solveForNet: solveForNet, incomeTax: incomeTax,
+  var api = { calcAll: calcAll, propertyAt: propertyAt, otherDefaults: otherDefaults, otherActive: otherActive, incomeTaxP: incomeTaxP, financeReducer: financeReducer, umbrella: umbrella, RATES: RATES, statement: statement, calc: calc, calcAt: calcAt, household: household, solveForNet: solveForNet, incomeTax: incomeTax,
     class1: class1, class4: class4, employerNI: employerNI, corpTax: corpTax, studentLoan: studentLoan, toAnnual: toAnnual,
     periods: periods, workdays: workdays, r2: r2 };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.BRBPAY = api;
