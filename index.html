@@ -77,7 +77,8 @@ td.best{color:var(--ok);font-weight:700}
 .person-cards{display:grid;gap:10px;margin-bottom:14px;grid-template-columns:1fr}
 .person-card{min-width:0;text-align:left;background:var(--s1);color:var(--cream);border:1px solid var(--hair);padding:14px;cursor:pointer;font:14px var(--bd)}
 .person-card[aria-pressed=true]{border-color:var(--red)}.person-card span{display:block;color:var(--dim);font-size:12px}.person-card b{display:block;font:700 30px var(--hd);margin:6px 0}.person-card small{font:14px var(--bd)}.person-card .edit-label{margin-top:8px;color:var(--cream)}
-.slip-controls{display:grid;grid-template-columns:1fr;gap:0}.statement{margin-top:12px;font-size:12px;table-layout:fixed}.statement th:first-child{width:44%}.statement th{font-size:10px;letter-spacing:0}.statement td{padding:9px 3px;font-variant-numeric:tabular-nums}.netrow{font-weight:700;border-top:2px solid var(--red)}
+.slip-controls{display:grid;grid-template-columns:1fr;gap:0}.sumc{padding:12px 10px}.sumt{font-size:11.5px;table-layout:fixed}.sumt th{font-size:9.5px;letter-spacing:.04em;text-transform:uppercase;color:var(--dim);font-weight:500;text-align:right;padding:0 2px 6px}.sumt th:first-child,.sumt td:first-child{text-align:left;width:28%}.sumt th:nth-child(2),.sumt td:nth-child(2){width:11%}.sumt td{padding:7px 2px;border-top:1px solid var(--hair);text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}.sumt td:first-child{white-space:normal;line-height:1.2}.sumt tr.sub td{color:var(--dim);font-size:10.5px}.sumt tr.sub td:first-child{padding-left:10px}.sumt tr.tot td{font-weight:700;color:var(--cream)}.sumt tr.memo td{color:var(--dim);font-style:normal}.sumt tr.memo td:first-child{font-size:10.5px}
+.statement{margin-top:12px;font-size:12px;table-layout:fixed}.statement th:first-child{width:44%}.statement th{font-size:10px;letter-spacing:0}.statement td{padding:9px 3px;font-variant-numeric:tabular-nums}.netrow{font-weight:700;border-top:2px solid var(--red)}
 @media(max-width:360px){.grid5{grid-template-columns:repeat(3,minmax(0,1fr))}.grid5 b{font-size:13px;word-break:normal}.statement{font-size:10.5px}.statement th{font-size:9px}.stats b{font-size:17px}}
 @media(min-width:700px){.person-cards{grid-template-columns:1fr 1fr}.wrap:has(.household-overview){max-width:760px}}
 #ores{margin-top:14px}.seg.tri button{flex:1 1 0;min-width:0;line-height:1.2}.cmpcards{margin-bottom:0}.cmpcard .amt input{font-size:20px}
@@ -154,10 +155,12 @@ td.best{color:var(--ok);font-weight:700}
   /* ---- Income tax ----
      nonSav: employment/trading income after any net-pay or sacrifice deduction.
      div: dividends. ras: GROSS relief-at-source pension contribution (extends bands, lowers adjusted net income). */
-  function incomeTax(nonSav, div, ras) {
+  function incomeTax(nonSav, div, ras, paye) {
     ras = ras || 0; div = div || 0;
     var ani = nonSav + div - ras;
     var pa = pos(RATES.pa - pos(ani - RATES.taperStart) / 2);
+    /* Payslip basis: HMRC payroll tables give tax-free pay of code x 10 + 9 (1257L = 12,579). Year-end liability uses the exact allowance. */
+    if (paye && pa >= 10) pa = Math.floor(pa / 10) * 10 + 9;
     var tn = pos(nonSav - pa);
     var paLeft = pos(pa - nonSav);
     var td = pos(div - paLeft);
@@ -258,7 +261,7 @@ td.best{color:var(--ok);font-weight:700}
     if (m === 'net') { taxable = G - e; }
     else if (m === 'sacrifice') { taxable = G - e; niPay = G - e; }
     else if (m === 'ras') { ras = e / (1 - RATES.pension.rasBasic); }
-    var t = incomeTax(taxable, 0, ras), ni = class1(niPay);
+    var t = incomeTax(taxable, 0, ras, p.taxBasis === 'payslip'), ni = class1(niPay);
     var slBase = m === 'sacrifice' ? G - e : G;
     var sl = studentLoan(slBase, p.studentLoan, p.pg);
     var net = G - e - t.incomeTax - ni - sl;
@@ -340,7 +343,7 @@ td.best{color:var(--ok);font-weight:700}
     } else { ddp = pos(base); er = employerNI(ddp); }   // employer NI paid by the client on top
     var e = pensionAmount(p.pension, p.pensionUnit, ddp);
     var ras = e / (1 - RATES.pension.rasBasic);
-    var t = incomeTax(ddp, 0, ras), ni = class1(ddp);
+    var t = incomeTax(ddp, 0, ras, p.taxBasis === 'payslip'), ni = class1(ddp);
     var sl = studentLoan(ddp, p.studentLoan, p.pg);
     var net = ddp - t.incomeTax - ni - sl - e;
     var L = [['Invoice (excl. VAT)', T, 'info']];
@@ -352,6 +355,56 @@ td.best{color:var(--ok);font-weight:700}
     if (sl) L.push(['Student loan', -sl, 'deduct']);
     return { net: net, tax: t.incomeTax, ni: ni + (inclusive ? er : 0), sl: sl, divTax: 0, ct: 0, pensionPersonal: e, pensionGross: ras + pe,
       employerPension: pe, lines: L, tinfo: t, tin: { np: ddp, div: 0, ras: ras }, base: T, employerCost: T + (inclusive ? 0 : er), extra: { ddp: ddp, employerNI: er } };
+  }
+
+
+  /* ---- Pay summary table: [label, annual amount, kind]. kind: 'info' | 'sub' (band line) | 'deduct' | 'tot' | 'memo' ---- */
+  function summaryRows(p, r, annual) {
+    var t = r.tinfo, np = r.tin.np, pa = t.pa, taxable = pos(np - pa), rows = [], x = r.extra || {};
+    function band(label, v) { if (v > 0.005) rows.push([label, v, 'sub']); }
+    function bands() {
+      band('Tax at 20%', t.basic); band('Tax at 40%', t.higher); band('Tax at 45%', t.additional);
+    }
+    if (p.mode === 'perm') {
+      rows.push(['Gross pay', annual, 'info'], ['Tax-free allowance', pa, 'info'], ['Total taxable', taxable, 'info']);
+      rows.push(['Income tax', r.tax, 'deduct']); bands();
+      rows.push(['National Insurance', r.ni, 'deduct']);
+      if (r.pensionPersonal) rows.push(['Pension (you)', r.pensionPersonal, 'deduct']);
+      if (r.sl) rows.push(['Student loan', r.sl, 'deduct']);
+      rows.push(['Total deductions', annual - r.net, 'tot'], ['Net pay', r.net, 'tot']);
+      rows.push(['Employer NI', x.employerNI || 0, 'memo']);
+    } else if (p.mode === 'inside') {
+      rows.push(['Invoice (excl. VAT)', annual, 'info']);
+      if (r.employerCost !== annual || (p.erInclusive !== false && x.employerNI)) { if (p.erInclusive !== false && x.employerNI) rows.push(['Employer NI taken from fee', x.employerNI, 'deduct']); }
+      rows.push(['Deemed payment', x.ddp, 'info'], ['Tax-free allowance', pa, 'info'], ['Total taxable', taxable, 'info']);
+      rows.push(['Income tax', r.tax, 'deduct']); bands();
+      rows.push(['National Insurance', r.ni - (p.erInclusive !== false ? (x.employerNI || 0) : 0), 'deduct']);
+      if (r.pensionPersonal) rows.push(['Pension (you)', r.pensionPersonal, 'deduct']);
+      if (r.sl) rows.push(['Student loan', r.sl, 'deduct']);
+      rows.push(['Net pay', r.net, 'tot']);
+    } else if (p.mode === 'sole') {
+      rows.push(['Turnover (excl. VAT)', annual, 'info']);
+      if (p.expenses) rows.push(['Business expenses', p.expenses, 'deduct']);
+      rows.push(['Profit', x.profit, 'info'], ['Tax-free allowance', pa, 'info'], ['Total taxable', taxable, 'info']);
+      rows.push(['Income tax', r.tax, 'deduct']); bands();
+      rows.push(['Class 4 NI', r.ni, 'deduct']);
+      if (r.pensionPersonal) rows.push(['Pension (you)', r.pensionPersonal, 'deduct']);
+      if (r.sl) rows.push(['Student loan', r.sl, 'deduct']);
+      rows.push(['Net income', r.net, 'tot']);
+    } else {
+      var ernic = x.employerNI || 0;
+      rows.push(['Contract income (excl. VAT)', annual, 'info']);
+      rows.push(['Corporation tax', r.ct, 'deduct'], ['Employer NI', ernic, 'deduct']);
+      rows.push(['Director salary', x.salary, 'info'], ['Dividends', x.dividends, 'info']);
+      rows.push(['Tax-free allowance', pa, 'info'], ['Taxable salary', taxable, 'info']);
+      rows.push(['Income tax on salary', r.tax, 'deduct']);
+      if (r.divTax) rows.push(['Dividend tax', r.divTax, 'deduct']);
+      if (r.ni - ernic > 0.005) rows.push(['Employee NI', r.ni - ernic, 'deduct']);
+      if (r.pensionPersonal) rows.push(['Pension (you)', r.pensionPersonal, 'deduct']);
+      if (r.sl) rows.push(['Student loan', r.sl, 'deduct']);
+      rows.push(['Net take-home', r.net, 'tot']);
+    }
+    return rows;
   }
 
   function calcAt(p, annual) {
@@ -375,6 +428,7 @@ td.best{color:var(--ok);font-weight:700}
     r.grossPeriods = periods(annual, p);
     r.workdays = p.mode === 'perm' ? null : workdays(p);
     var ani = r.tinfo.ani;
+    r.summary = summaryRows(p, r, annual);
     r.flags = [];
     if (ani > RATES.taperStart && ani < RATES.additionalAt) r.flags.push('Your income is in the £100,000 to £125,140 band where the personal allowance is withdrawn, an effective marginal rate near 60%. A pension contribution here can recover a lot of it.');
     if (r.pensionGross > RATES.pension.annualAllowance) r.flags.push('Total pension contributions are above the £60,000 annual allowance (carry forward may apply).');
@@ -515,9 +569,10 @@ var E=window.BRBPAY,R=E.RATES,KEY='paybrb.v1';
 var MODES=[['perm','Permanent'],['sole','Sole trader'],['ltd','Ltd outside IR35'],['inside','Inside IR35']];
 var UNITS=[['hour','per hour'],['day','per day'],['week','per week'],['month','per month'],['year','per year']];
 var PER=[['hour','Hour'],['day','Day'],['week','Week'],['month','Month'],['year','Year']];
+var DEFAULT_BASIS='year';
 function newPerson(mode){return{mode:mode||'ltd',amount:mode==='perm'?60000:500,unit:mode==='perm'?'year':'day',dpw:5,hoursPerDay:7.5,holidayDays:25,bankHols:8,sickDays:0,
  expenses:0,vatRegistered:false,vatFlat:false,frsRate:14.5,salaryMode:'optimise',salaryCustom:12570,pension:0,pensionUnit:'amt',pensionMethod:'net',employerPension:0,
- studentLoan:'none',pg:false,erInclusive:true,other:E.otherDefaults()};}
+ studentLoan:'none',pg:false,erInclusive:true,taxBasis:DEFAULT_BASIS,other:E.otherDefaults()};}
 var S={tab:'calc',y2728:false,cmpView:'hh',joint:false,who:0,names:['Person A','Person B'],period:'month',slipFrequency:'month',slipNumber:1,people:[newPerson('ltd'),newPerson('perm')],tgt:{amount:4000,unit:'month'},umb:{rate:500,days:5,margin:39.5,pensionPct:0,taxCode:'1257L'}};
 try{var sv=JSON.parse(localStorage.getItem(KEY)||'null');if(sv&&sv.people){S=Object.assign(S,sv);S.people=sv.people.map(function(p){var q=Object.assign(newPerson(p.mode),p);q.other=Object.assign(E.otherDefaults(),p.other||{});return q});S.tgt=sv.tgt||S.tgt;S.umb=Object.assign({rate:500,days:5,margin:39.5,pensionPct:0,taxCode:'1257L'},sv.umb||{});S.names=(Array.isArray(sv.names)?sv.names:[]).slice(0,2);}}catch(e){}
 function pn(i){var n=S.names&&S.names[i];n=n?String(n).trim():'';return n||(i===0?'Person A':'Person B')}
@@ -539,6 +594,7 @@ function formHTML(p){
  h+='<div class="seg two" role="group" aria-label="Pay type">'+MODES.map(function(m){return'<button type="button" data-mode="'+m[0]+'" aria-pressed="'+(p.mode===m[0])+'">'+m[1]+'</button>'}).join('')+'</div>';
  var lab=p.mode==='perm'?'Salary':p.mode==='sole'?'Income (excl. VAT)':p.mode==='inside'?'Rate (excl. VAT)':'Contract rate (excl. VAT)';
  h+='<label for="f_amount">'+lab+'</label><div class="amt"><span class="pre">\u00a3</span><input id="f_amount" data-k="amount" data-t="n" type="text" inputmode="decimal" value="'+esc(p.amount)+'"><select data-k="unit" aria-label="Period">'+opts(UNITS,p.unit)+'</select></div>';
+ if(p.mode==='perm'||p.mode==='inside')h+=sel('taxBasis','Tax basis',[['year','Tax year (HMRC year-end figure)'],['payslip','Payslip (tax code 1257L)']],p.taxBasis||'year')+'<p class="hint">Tax year is the exact figure with the standard \u00a312,570 allowance. Payslip is what payroll deducts under code 1257L (\u00a312,579 of tax-free pay, as HMRC adds \u00a39), about \u00a31.80 a year less tax, settled at year end.</p>';
  if(p.mode==='inside')h+='<p class="hint">Public sector or medium/large client: the fee-payer works out the deemed payment and deducts PAYE and NI before paying you.</p>';
  h+='<details'+(p.mode==='perm'?'':' open')+'><summary>Working pattern</summary><div class="row">'+num('dpw','Days a week',p.dpw)+num('hoursPerDay','Hours a day',p.hoursPerDay)+'</div>';
  if(p.mode!=='perm')h+='<div class="row">'+num('holidayDays','Holiday days',p.holidayDays)+num('bankHols','Bank holidays',p.bankHols)+'</div><div class="row">'+num('sickDays','Sick / gap days',p.sickDays)+'<div></div></div><p class="hint" id="wdhint"></p>';
@@ -590,6 +646,15 @@ function barHTML(r){
 function linesHTML(r){
  var h='<ul class="lines">'+r.lines.map(function(l){return'<li class="'+(l[2]==='deduct'?'neg':'')+'"><span>'+esc(l[0])+'</span><span class="n">'+gbp(l[1])+'</span></li>'}).join('');
  return h+'<li class="tot"><span>Take-home</span><span class="n">'+gbp(r.net)+'</span></li></ul>';}
+function sumTableHTML(r){
+ var g=r.annualGross||1;
+ function c(v,dp){return gbp(v,dp)}
+ var h='<table class="sumt"><thead><tr><th></th><th>%</th><th>Year</th><th>Month</th><th>Week</th></tr></thead><tbody>';
+ r.summary.forEach(function(x){
+  var v=x[1]||0,k=x[2];
+  h+='<tr class="'+k+'"><td>'+esc(x[0])+'</td><td>'+(k==='memo'?'':(v/g*100).toFixed(v/g*100<10&&v?1:0).replace(/\.0$/,'')+'%')+'</td><td>'+c(v,0)+'</td><td>'+c(v/12,2)+'</td><td>'+c(v/52,2)+'</td></tr>';
+ });
+ return h+'</tbody></table>';}
 function resultsHTML(){
  var h='';
  var p=P(),r=E.calc(p);
@@ -597,7 +662,7 @@ function resultsHTML(){
  var ra=E.calcAll(p,OPT()).all;if(ra.active)h+='<div class="flag">These figures are your pay only. With the other income you entered, take-home is '+gbp(ra.net)+' a year. See the Other income tab.</div>';
  h+='<div class="stats"><div><b>'+gbp(r.totalTax)+'</b><span>Tax and NI a year</span></div><div><b>'+pc(r.effective)+'</b><span>Average rate</span></div><div><b>'+pc(r.marginal,0)+'</b><span>On the next \u00a31</span></div></div>';
  r.flags.forEach(function(f){h+='<div class="flag">'+esc(f)+'</div>'});
- h+='<div class="card">'+barHTML(r)+'</div><h2>Breakdown (a year)</h2><div class="card">'+linesHTML(r)+'</div>';
+ h+='<div class="card">'+barHTML(r)+'</div><h2>Pay summary</h2><div class="card sumc">'+sumTableHTML(r)+'<p class="hint" style="margin:8px 0 0">'+((p.mode==='perm'||p.mode==='inside')?(p.taxBasis==='payslip'?'Payslip basis, tax code 1257L.':'Tax-year basis.')+' ':'')+'Percent is of '+(p.mode==='perm'?'gross pay':p.mode==='sole'?'turnover':p.mode==='inside'?'the invoice':'contract income')+'. Monthly and weekly are the annual figure divided by 12 and 52.</p></div><h2>Breakdown (a year)</h2><div class="card">'+linesHTML(r)+'</div>';
  if(r.pensionGross>0)h+='<div class="card"><b>Pension going in</b><p class="hint" style="margin:4px 0 0">'+gbp(r.pensionGross)+' a year in total (you '+gbp(r.pensionPersonal)+(r.employerPension?', employer '+gbp(r.employerPension):'')+(p.mode==='perm'&&p.pensionMethod==='ras'?', plus 20% added by provider':'')+').</p></div>';
  if(p.mode==='inside'&&r.extra)h+='<div class="card"><b>Client cost</b><p class="hint" style="margin:4px 0 0">Employer NI on the deemed payment is '+gbp(r.extra.employerNI)+' a year'+(p.erInclusive!==false?', taken out of your fee.':', paid by the client on top.')+'</p></div>';
  if(p.mode==='ltd'&&r.extra)h+='<div class="card"><b>Company</b><p class="hint" style="margin:4px 0 0">Salary '+gbp(r.extra.salary)+', employer NI '+gbp(r.extra.employerNI)+', profit '+gbp(r.extra.profit)+', corporation tax '+gbp(r.ct)+', dividends '+gbp(r.extra.dividends)+'. All profit assumed paid out each year.</p></div>';
