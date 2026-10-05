@@ -4,7 +4,7 @@ UK pay calculator by bigredbox. Permanent salary, sole trader, Ltd outside IR35 
 
 - Rates for 2026/27 live in one object, `RATES` in `engine.js`. Next April: update it and run `node test.js`.
 - `index.html` is the built app (engine and styles inlined). Estimates only, not tax advice.
-- Tests check gov.uk worked examples and the ContractorUK 2026/27 default case.
+- Tests check gov.uk worked examples, the ContractorUK 2026/27 default case and a listentotaxman payslip reconciliation (tax code 1257L, allowance £12,579).
 
 ## v1.1
 - Household overview shows both people together, stacked on mobile.
