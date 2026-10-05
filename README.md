@@ -19,3 +19,5 @@ UK pay calculator by bigredbox. Permanent salary, sole trader, Ltd outside IR35 
 - Sources (gov.uk): tax relief for residential landlords how it's worked out; property and trading allowances; property, savings and dividend rates technical note (26 Nov 2025); form 17 for joint property.
 - Tests in `test.js` use the gov.uk landlord examples, the technical note annex example and hand-worked cases.
 
+
+Deploy retrigger 6 Oct.
