@@ -64,6 +64,7 @@ td.best{color:var(--ok);font-weight:700}
 .scroll{overflow-x:auto;margin:0 -2px}
 .btn{background:var(--red);color:var(--cream);border:0;font:600 15px var(--hd);padding:13px 22px;min-height:52px;cursor:pointer;width:100%}
 .btn.ghost{background:none;border:1px solid var(--hair);color:var(--dim)}
+.btn.armed{border-color:var(--redhi);color:var(--redhi)}
 .who{display:flex;gap:8px;margin-bottom:12px}
 .who button{flex:1}
 .disc{font-size:12.5px;color:var(--dim);border-top:1px solid var(--hair);margin-top:26px;padding-top:14px}
@@ -677,6 +678,7 @@ function cmpHousehold(){
  var n=S.joint?2:1,ppl=S.people.slice(0,n),hh=E.household(ppl,OPT()),rs=hh.people;
  var inp='<div class="person-cards cmpcards">'+ppl.map(function(p,i){return cmpPerson(i)}).join('')+'</div>';
  if(!S.joint)inp+='<button class="btn ghost" type="button" data-act="addb" style="margin-bottom:12px">Add a second person to compare as a household</button>';
+ else inp+='<button class="btn ghost" type="button" data-act="rmb" data-lbl="Remove '+esc(pn(1))+'" style="margin-bottom:6px">Remove '+esc(pn(1))+'</button><p class="hint" style="margin:0 0 12px">Added by mistake? Remove them here. Their details are kept if you add them again.</p>';
  var h='';
  var money=function(f){return function(r){return gbp(f(r))}};
  var any=rs.some(function(r){return r.all.active});
@@ -803,6 +805,7 @@ document.addEventListener('click',function(e){var b=e.target.closest('button');i
  if(b.dataset.cview){S.cmpView=b.dataset.cview;save();main();return}
  if(b.dataset.y){S.y2728=b.dataset.y==='1';save();main();return}
  if(b.dataset.act==='addb'){S.joint=true;save();main();return}
+ if(b.dataset.act==='rmb'){if(b.dataset.arm==='1'){clearTimeout(window._rmT);S.joint=false;S.who=0;save();main();return}b.dataset.arm='1';b.classList.add('armed');b.textContent='Tap again to remove '+pn(1);clearTimeout(window._rmT);window._rmT=setTimeout(function(){b.dataset.arm='';b.classList.remove('armed');b.textContent=b.dataset.lbl},3000);return}
  if(b.dataset.act==='copyprop'){var from=S.people[S.who],to=S.people[1-S.who],fo=from.other,sh=Math.max(0,Math.min(100,100-(+fo.share||0)));to.other=Object.assign({},to.other,{rent:fo.rent,expenses:fo.expenses,interest:fo.interest,capital:fo.capital,costMode:fo.costMode,share:sh,finBf:0});save();S.who=1-S.who;save();main();return}
  if(b.dataset.per){S.period=b.dataset.per;save();paint();return}
  if(b.dataset.joint){S.joint=b.dataset.joint==='1';if(!S.joint)S.who=0;save();main();return}
