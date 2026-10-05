@@ -106,4 +106,19 @@ eq('no other income leaves take-home unchanged', plain.all.net, E.calc({ mode: '
 // household sums the combined figures
 var hhx = E.household([{ mode: 'perm', amount: 50000, unit: 'year' }, { mode: 'perm', amount: 30000, unit: 'year' }]);
 eq('household net', hhx.net, E.calc({ mode: 'perm', amount: 50000, unit: 'year' }).net + E.calc({ mode: 'perm', amount: 30000, unit: 'year' }).net);
+// Payslip basis (HMRC Tables A: tax-free pay = code x 10 + 9, so 1257L = 12,579). Reconciled to listentotaxman 2026/27.
+function pay(g, x) { return E.calc(Object.assign({ mode: 'perm', amount: g, unit: 'year', taxBasis: 'payslip' }, x || {})); }
+eq('payslip tax 50k', pay(50000).tax, 7484.2); eq('payslip net 50k', pay(50000).net, 39521.4);
+eq('payslip tax 110k', pay(110000).tax, 33428.4); eq('payslip allowance 110k', pay(110000).tinfo.pa, 7579);
+eq('payslip tax 125k', pay(125000).tax, 42428.4); eq('payslip allowance 125k', pay(125000).tinfo.pa, 79);
+eq('payslip tax 150k (no allowance, no +9)', pay(150000).tax, 53703);
+eq('year basis stays exact 50k', E.calc({ mode: 'perm', amount: 50000, unit: 'year' }).tax, 7486);
+// Summary rows reconcile in every mode: net = last total row
+['perm', 'sole', 'ltd', 'inside'].forEach(function (m) {
+  var r = E.calc({ mode: m, amount: 88000, unit: 'year', expenses: 3000 });
+  var last = r.summary.filter(function (x) { return x[2] === 'tot'; }).pop();
+  eq('summary net row ' + m, last[1], r.net);
+});
+var sp = pay(50000);
+eq('summary deductions 50k payslip', sp.summary.filter(function (x) { return x[0] === 'Total deductions'; })[0][1], 10478.6);
 process.exit(fails ? 1 : 0);
