@@ -52,8 +52,58 @@ eq('monthly count',inc.count,12);
 eq('weekly count',E.statement({mode:'perm',amount:50000,unit:'year'},'week').count,52);
 eq('4-weekly count',E.statement({mode:'perm',amount:50000,unit:'year'},'fourweek').count,13);
 console.log(fails ? fails + ' FAILED' : 'ALL PASSED');
-process.exit(fails ? 1 : 0);
 // Umbrella: invoice splits exactly into gross + employer costs + pension + fee
 var um = E.umbrella({ rate: 500, days: 5, pensionPct: 10, taxCode: '1257L' });
 eq('umbrella split sums to invoice', um.gross + um.ernic + um.levy + um.pension + um.margin, um.invoice, 0.02);
 eq('umbrella net = gross - tax - NI', um.net, um.gross - um.tax - um.ni, 0.01);
+
+/* ---- Other income: rental property, Section 24 finance cost reducer, 2027/28 property rates ---- */
+// gov.uk "Tax relief for residential landlords: how it's worked out" (reducer = rate x lowest of finance costs, property profit, adjusted total income above PA)
+eq('gov.uk landlord ex 1 (Sophia): finance costs lowest', E.financeReducer(20000, 0, 43000, 32000, 0.2).reduction, 4000);
+eq('gov.uk landlord ex 2 (John): finance costs lowest', E.financeReducer(8000, 0, 16000, 40000, 0.2).reduction, 1600);
+eq('gov.uk landlord ex 4 (Brian) yr1: property profit lowest', E.financeReducer(15000, 0, 13000, 38000, 0.2).reduction, 2600);
+eq('gov.uk landlord ex 4 (Brian) yr1: carry forward', E.financeReducer(15000, 0, 13000, 38000, 0.2).carry, 2000);
+eq('gov.uk landlord ex 4 (Brian) yr2: 17,000 incl b/f', E.financeReducer(15000, 2000, 22000, 47000, 0.2).reduction, 3400);
+eq('reducer limited by adjusted total income', E.financeReducer(20000, 0, 40000, 5000, 0.2).reduction, 1000);
+// gov.uk technical note annex (2027/28): employment 30,000, property profit 3,000, finance costs 1,000, dividends 200 (savings 400 omitted, taxed at 0%)
+var ax = E.incomeTaxP(30000, 3000, 200, 0);
+eq('2027/28 annex: employment tax 3,486 + property tax 660', ax.incomeTax, 4146);
+eq('2027/28 annex: dividend tax nil (allowance)', ax.dividendTax, 0);
+var axp = { mode: 'perm', amount: 30000, unit: 'year', other: { rent: 3000, share: 100, costMode: 'exp', expenses: 0, interest: 1000, div: 200 } };
+var axr = E.calcAll(axp, { y2728: true });
+eq('2027/28 annex: total income tax after 22% reducer = 3,926', axr.tax + axr.all.tax - axr.tax, 3926);
+eq('2027/28 annex: reduction 220', axr.all.reduction, 220);
+// 2027/28 property rates stack on top of earnings: 50,000 earnings, 10,000 property profit
+eq('2027/28 stacking: 7,486 + 270 x 22% + 9,730 x 42%', E.incomeTaxP(50000, 10000, 0, 0).incomeTax, 7486 + 270 * 0.22 + 9730 * 0.42);
+eq('2027/28 with no property equals normal calc', E.incomeTaxP(50000, 0, 0, 0).incomeTax, E.incomeTax(50000, 0, 0).incomeTax);
+// 2026/27 hand-worked (Brian-style): salary 50,000, rent 20,000, other costs 7,000, interest 15,000
+var br = E.calcAll({ mode: 'perm', amount: 50000, unit: 'year', other: { rent: 20000, share: 100, costMode: 'exp', expenses: 7000, interest: 15000, capital: 0 } });
+// income tax on 63,000: 37,700 x 20% + 12,730 x 40% = 12,632, less 20% x 13,000 = 2,600 -> 10,032; was 7,486
+eq('2026/27 Brian-style: total income tax', br.all.tax, 10032);
+eq('2026/27 Brian-style: reducer', br.all.reduction, 2600);
+eq('2026/27 Brian-style: finance costs carried forward', br.all.reducer.carry, 2000);
+eq('2026/27 Brian-style: extra tax', br.all.extraTax, 10032 - 7486);
+eq('2026/27 Brian-style: cash after costs, interest and tax', br.all.otherCash, 20000 - 7000 - 15000 - (10032 - 7486));
+// property allowance: 6,000 rent, 30,000 salary: profit 5,000, 20% extra
+var al = E.calcAll({ mode: 'perm', amount: 30000, unit: 'year', other: { rent: 6000, share: 100, costMode: 'allow', expenses: 0, interest: 2000 } });
+eq('property allowance: profit 5,000 taxed at 20%', al.all.extraTax, 1000);
+eq('property allowance: no finance cost reducer', al.all.reduction, 0);
+var al5 = E.calcAll({ mode: 'perm', amount: 30000, unit: 'year', other: { rent: 6000, share: 50, costMode: 'allow' } });
+eq('property allowance on 50% share: 3,000 rent less 1,000 = 2,000 x 20%', al5.all.extraTax, 400);
+eq('rent of 1,000 or less is fully covered by the allowance', E.calcAll({ mode: 'perm', amount: 30000, unit: 'year', other: { rent: 900, costMode: 'allow' } }).all.extraTax, 0);
+// ownership share applies to rent, costs and interest
+var sh = E.propertyAt({ rent: 12000, share: 50, expenses: 2000, interest: 4000, capital: 1000, costMode: 'exp' });
+eq('share: rent', sh.rent, 6000); eq('share: profit', sh.profit, 5000); eq('share: interest', sh.interest, 2000);
+// loss: costs above rent give no profit and no reducer
+var ls = E.calcAll({ mode: 'perm', amount: 30000, unit: 'year', other: { rent: 5000, expenses: 8000, interest: 1000 } });
+eq('loss: no extra tax', ls.all.extraTax, 0); eq('loss recorded', ls.all.loss, 3000);
+// dividends sit on top: salary 12,570 (covered by PA), rent profit 30,000, other dividends 40,000. Hand-worked:
+// rent 30,000 x 20% = 6,000; dividends start at 30,000 taxable: 500 nil, 7,200 x 10.75% = 774, 32,300 x 35.75% = 11,547.25
+eq('rent pushes other dividends up the bands', E.calcAll({ mode: 'perm', amount: 12570, unit: 'year', other: { rent: 30000, div: 40000 } }).all.extraTax, 6000 + 774 + 11547.25);
+// no other income: calcAll equals calc
+var plain = E.calcAll({ mode: 'ltd', amount: 500, unit: 'day' });
+eq('no other income leaves take-home unchanged', plain.all.net, E.calc({ mode: 'ltd', amount: 500, unit: 'day' }).net);
+// household sums the combined figures
+var hhx = E.household([{ mode: 'perm', amount: 50000, unit: 'year' }, { mode: 'perm', amount: 30000, unit: 'year' }]);
+eq('household net', hhx.net, E.calc({ mode: 'perm', amount: 50000, unit: 'year' }).net + E.calc({ mode: 'perm', amount: 30000, unit: 'year' }).net);
+process.exit(fails ? 1 : 0);
