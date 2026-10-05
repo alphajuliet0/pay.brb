@@ -79,6 +79,8 @@ td.best{color:var(--ok);font-weight:700}
 .slip-controls{display:grid;grid-template-columns:1fr;gap:0}.statement{margin-top:12px;font-size:12px;table-layout:fixed}.statement th:first-child{width:44%}.statement th{font-size:10px;letter-spacing:0}.statement td{padding:9px 3px;font-variant-numeric:tabular-nums}.netrow{font-weight:700;border-top:2px solid var(--red)}
 @media(max-width:360px){.grid5{grid-template-columns:repeat(3,minmax(0,1fr))}.grid5 b{font-size:13px;word-break:normal}.statement{font-size:10.5px}.statement th{font-size:9px}.stats b{font-size:17px}}
 @media(min-width:700px){.person-cards{grid-template-columns:1fr 1fr}.wrap:has(.household-overview){max-width:760px}}
+#ores{margin-top:14px}.seg.tri button{flex:1 1 0;min-width:0;line-height:1.2}.cmpcards{margin-bottom:0}.cmpcard .amt input{font-size:20px}
+.cmpt{font-size:13px}.cmpt th,.cmpt td{padding:8px 4px}.cmpt tr.strong td{font-weight:700;color:var(--cream)}.cmpt .hhc{background:rgba(240,237,232,.05)}
 #report{display:none}.report-open #app{display:none}.report-open #report{display:block}.report-controls{max-width:720px;margin:20px auto;padding:16px}.report-controls .btn{margin-bottom:8px}.report-page{background:#fff;color:#171717;max-width:800px;margin:20px auto;padding:28px}.report-page h1{font:700 26px var(--hd)}.report-page h2,.report-page .hint,.report-page .disc,.report-page th{color:#555}.report-page .brand{color:#171717}.report-page .brand svg [fill="#F0EDE8"]{fill:#171717}.report-page header{flex-wrap:wrap}.report-page .disc{border-color:#ddd}.report-page td,.report-page th{border-color:#ddd}.report-summary{display:flex;gap:12px;flex-wrap:wrap;padding:12px 0;border-top:3px solid #C8221A}.report-assumptions{font-size:13px;padding-left:18px}.report-person{margin-bottom:30px}.report-method{font-size:12px}.report-page .statement{font-size:13px}.report-page .statement th{font-size:11px}
 @media(max-width:450px){.report-page{padding:16px}.report-page .statement{font-size:10.5px}.report-page .statement th{font-size:9px}}
 @media print{html{background:#fff}@page{size:A4;margin:14mm}body{padding:0;background:#fff;color:#171717;font-size:11px;line-height:1.3}#app,.report-controls{display:none!important}#report{display:block!important}.report-page{margin:0;padding:0;max-width:none}.report-page header{padding:0 0 12px}.report-person+.report-person{break-before:page}.report-method{break-before:page}tr{break-inside:avoid}h1,h2{break-after:avoid}.report-page .statement{font-size:11px}.report-page table{font-size:10px}.report-page h1{font-size:22px;margin:10px 0}.report-page h2{margin:12px 0 5px}.report-assumptions{font-size:10px;columns:2;column-gap:24px}.report-assumptions li{break-inside:avoid}.report-page .hint{font-size:10px;line-height:1.4}.report-page p{margin:7px 0}.report-page th,.report-page td{padding:4px}.report-page .disc a{color:#171717}}
@@ -112,6 +114,8 @@ td.best{color:var(--ok);font-weight:700}
       ['Limited cost business (goods under 2% of turnover or £1,000)', 16.5]
     ],
     umbrella: { margin: 39.5, levy: 0.005, stWeek: 96, ptWeek: 242, uelWeek: 967 },
+    property: { checked: '5 October 2026', allowance: 1000, reducerRate: 0.20,
+      y2728: { basic: 0.22, higher: 0.42, additional: 0.47, reducerRate: 0.22, year: '2027/28' }, regSA: 2500 },
     bankHolidays: 8, hoursPerDay: 7.5
   };
 
@@ -173,6 +177,41 @@ td.best{color:var(--ok);font-weight:700}
     return out;
   }
 
+  /* ---- Income tax from April 2027 (2027/28): property income has its own rates and is taxed after
+     other income but before dividends. Allowances are set against non-property income first.
+     np: income that is not property, savings or dividends. prop: property profit. div: dividends. ras as above.
+     Source: gov.uk technical note on property, savings and dividend rates (26 Nov 2025). */
+  function incomeTaxP(np, prop, div, ras) {
+    ras = ras || 0; div = div || 0; prop = prop || 0;
+    var ani = np + prop + div - ras;
+    var pa = pos(RATES.pa - pos(ani - RATES.taperStart) / 2);
+    var npT = pos(np - pa), paLeft = pos(pa - np);
+    var prT = pos(prop - paLeft), paLeft2 = pos(paLeft - prop);
+    var td = pos(div - paLeft2);
+    var bb = RATES.basicBand + ras, al = RATES.additionalAt + ras, pos0 = 0;
+    var P = RATES.property.y2728;
+    function stack(amt, r) {
+      var b = Math.min(amt, pos(bb - pos0)), h = Math.min(amt - b, pos(al - pos0 - b)), a = amt - b - h;
+      pos0 += amt; return b * r[0] + h * r[1] + a * r[2];
+    }
+    var out = { pa: pa, ani: ani };
+    out.npTax = stack(npT, [RATES.rate.basic, RATES.rate.higher, RATES.rate.additional]);
+    out.propTax = stack(prT, [P.basic, P.higher, P.additional]);
+    var nil = Math.min(RATES.div.allowance, td); pos0 += nil;
+    out.dividendTax = stack(td - nil, [RATES.div.basic, RATES.div.higher, RATES.div.additional]);
+    out.incomeTax = out.npTax + out.propTax;
+    out.total = out.incomeTax + out.dividendTax;
+    return out;
+  }
+
+  /* ---- Residential finance costs tax reduction (HMRC, Section 24) ----
+     Reduction = rate x the LOWEST of: finance costs (this year plus brought forward), property profits,
+     and adjusted total income above the personal allowance. Any unused finance costs carry forward. */
+  function financeReducer(fin, bf, profit, ati, rate) {
+    var avail = pos(fin) + pos(bf), base = Math.min(avail, pos(profit), pos(ati));
+    return { reduction: base * rate, used: base, carry: avail - base, available: avail };
+  }
+
   /* ---- Working pattern and unit conversion ---- */
   function workdays(p) {
     var dpw = p.dpw != null ? p.dpw : 5;
@@ -227,7 +266,7 @@ td.best{color:var(--ok);font-weight:700}
     L.push(['Income tax', -t.incomeTax, 'deduct'], ['National Insurance', -ni, 'deduct']);
     if (sl) L.push(['Student loan', -sl, 'deduct']);
     return { net: net, tax: t.incomeTax, ni: ni, sl: sl, divTax: 0, ct: 0, pensionPersonal: e, pensionGross: (m === 'ras' ? ras : e) + er,
-      employerPension: er, lines: L, tinfo: t, base: G, employerCost: G + employerNI(niPay) + er,
+      employerPension: er, lines: L, tinfo: t, tin: { np: taxable, div: 0, ras: ras }, base: G, employerCost: G + employerNI(niPay) + er,
       extra: { employerNI: employerNI(niPay) } };
   }
 
@@ -247,7 +286,7 @@ td.best{color:var(--ok);font-weight:700}
     L.push(['Income tax', -t.incomeTax, 'deduct'], ['Class 4 National Insurance', -c4, 'deduct']);
     if (sl) L.push(['Student loan', -sl, 'deduct']);
     return { net: net, tax: t.incomeTax, ni: c4, sl: sl, divTax: 0, ct: 0, pensionPersonal: e, pensionGross: ras, employerPension: 0,
-      lines: L, tinfo: t, base: T, employerCost: 0, extra: { profit: profit } };
+      lines: L, tinfo: t, tin: { np: pos(profit), div: 0, ras: ras }, base: T, employerCost: 0, extra: { profit: profit } };
   }
 
   function ltdAt(p, T, S) {
@@ -275,7 +314,7 @@ td.best{color:var(--ok);font-weight:700}
     if (e) L.push(['Pension (relief at source, you pay)', -e, 'deduct']);
     if (sl) L.push(['Student loan', -sl, 'deduct']);
     return { net: net, tax: t.incomeTax, ni: ni + ernic, sl: sl, divTax: t.dividendTax, ct: ct, pensionPersonal: e, pensionGross: ras + pe,
-      employerPension: pe, lines: L, tinfo: t, base: T, employerCost: 0, extra: { salary: S, dividends: div, profit: profit, employerNI: ernic } };
+      employerPension: pe, lines: L, tinfo: t, tin: { np: S, div: div, ras: ras }, base: T, employerCost: 0, extra: { salary: S, dividends: div, profit: profit, employerNI: ernic } };
   }
   function calcLtd(p, T) {
     var mode = p.salaryMode || 'optimise', best = null, cands;
@@ -311,7 +350,7 @@ td.best{color:var(--ok);font-weight:700}
     if (e) L.push(['Pension (relief at source, you pay)', -e, 'deduct']);
     if (sl) L.push(['Student loan', -sl, 'deduct']);
     return { net: net, tax: t.incomeTax, ni: ni + (inclusive ? er : 0), sl: sl, divTax: 0, ct: 0, pensionPersonal: e, pensionGross: ras + pe,
-      employerPension: pe, lines: L, tinfo: t, base: T, employerCost: T + (inclusive ? 0 : er), extra: { ddp: ddp, employerNI: er } };
+      employerPension: pe, lines: L, tinfo: t, tin: { np: ddp, div: 0, ras: ras }, base: T, employerCost: T + (inclusive ? 0 : er), extra: { ddp: ddp, employerNI: er } };
   }
 
   function calcAt(p, annual) {
@@ -352,9 +391,55 @@ td.best{color:var(--ok);font-weight:700}
     return hi;
   }
 
-  function household(people) {
-    var rs = people.map(calc), net = 0, tot = 0, gross = 0;
-    rs.forEach(function (r) { net += r.net; tot += r.totalTax; gross += r.annualGross; });
+  /* ---- Other income: rental property (residential, own name), other earnings, other dividends ----
+     Works out the EXTRA tax the other income causes on top of the main income, by running the whole
+     income tax calculation with and without it. Rent is non-savings income: it uses up the basic-rate band,
+     can taper the personal allowance and pushes dividends into higher bands. No NI, student loan or pension
+     is modelled on it. opts.y2728 switches property income to the April 2027 rates and ordering. */
+  function otherDefaults() { return { rent: 0, share: 100, costMode: 'exp', expenses: 0, interest: 0, capital: 0, finBf: 0, earn: 0, div: 0 }; }
+  function otherActive(o) { return !!o && (+o.rent > 0 || +o.earn > 0 || +o.div > 0); }
+  function propertyAt(o, opts) {
+    o = Object.assign(otherDefaults(), o || {});
+    var share = o.share === '' || o.share == null ? 1 : Math.min(100, pos(+o.share)) / 100;
+    var rent = pos(+o.rent) * share, exp = pos(+o.expenses) * share, intr = pos(+o.interest) * share, cap = pos(+o.capital) * share;
+    var allow = o.costMode === 'allow', A = RATES.property.allowance;
+    var deduction = allow ? Math.min(A, rent) : exp;
+    var profit = rent - deduction;
+    var out = { rent: rent, expenses: exp, interest: intr, capital: cap, allowance: allow, deduction: deduction,
+      profit: pos(profit), loss: pos(-profit), financeClaimable: allow ? 0 : intr, financeBf: allow ? 0 : pos(+o.finBf) };
+    out.fullyRelieved = allow && rent > 0 && rent <= A;
+    return out;
+  }
+  function calcAll(p, opts) {
+    opts = opts || {};
+    var r = calc(p), o = p.other;
+    var all = { gross: r.annualGross, tax: r.tax, ni: r.ni, sl: r.sl, divTax: r.divTax, ct: r.ct, net: r.net, otherCash: 0, extraTax: 0, active: false };
+    if (otherActive(o)) {
+      var pr = propertyAt(o, opts), oe = pos(+o.earn), od = pos(+o.div), tin = r.tin, rate, t1, t0 = r.tinfo;
+      var npAll = tin.np + oe, divAll = tin.div + od;
+      if (opts.y2728) { rate = RATES.property.y2728.reducerRate; t1 = incomeTaxP(npAll, pr.profit, divAll, tin.ras); }
+      else { rate = RATES.property.reducerRate; t1 = incomeTax(npAll + pr.profit, divAll, tin.ras); }
+      var ati = pos(npAll + pr.profit - t1.pa);
+      var fr = financeReducer(pr.financeClaimable, pr.financeBf, pr.profit, ati, rate);
+      var red = Math.min(fr.reduction, t1.incomeTax);
+      var dIT = t1.incomeTax - t0.incomeTax, dDiv = t1.dividendTax - t0.dividendTax;
+      var extra = dIT - red + dDiv;
+      var cash = pr.rent - pr.expenses - pr.interest - pr.capital + oe + od - extra;
+      all = { gross: r.annualGross + pr.rent + oe + od, tax: r.tax + dIT - red, ni: r.ni, sl: r.sl, divTax: r.divTax + dDiv, ct: r.ct,
+        otherCash: cash, extraTax: extra, active: true, prop: pr, reducer: fr, reduction: red, reducerRate: rate,
+        taxBeforeReduction: dIT + dDiv, incomeTaxAdded: dIT, dividendTaxAdded: dDiv, otherEarn: oe, otherDiv: od, ati: ati, y2728: !!opts.y2728,
+        loss: pr.loss, paAfter: t1.pa, ani: t1.ani };
+      all.net = r.net + cash;
+    }
+    all.totalTax = all.tax + all.ni + all.sl + all.divTax + all.ct;
+    all.effective = all.gross > 0 ? all.totalTax / all.gross : 0;
+    r.all = all;
+    return r;
+  }
+
+  function household(people, opts) {
+    var rs = people.map(function (p) { return calcAll(p, opts); }), net = 0, tot = 0, gross = 0;
+    rs.forEach(function (r) { net += r.all.net; tot += r.all.totalTax; gross += r.all.gross; });
     return { people: rs, net: net, totalTax: tot, gross: gross, effective: gross ? tot / gross : 0 };
   }
 
@@ -418,7 +503,7 @@ td.best{color:var(--ok);font-weight:700}
       deducted: r2(invoice - gross), pensionPotPlusNet: r2(net + pension) };
   }
 
-  var api = { umbrella: umbrella, RATES: RATES, statement: statement, calc: calc, calcAt: calcAt, household: household, solveForNet: solveForNet, incomeTax: incomeTax,
+  var api = { calcAll: calcAll, propertyAt: propertyAt, otherDefaults: otherDefaults, otherActive: otherActive, incomeTaxP: incomeTaxP, financeReducer: financeReducer, umbrella: umbrella, RATES: RATES, statement: statement, calc: calc, calcAt: calcAt, household: household, solveForNet: solveForNet, incomeTax: incomeTax,
     class1: class1, class4: class4, employerNI: employerNI, corpTax: corpTax, studentLoan: studentLoan, toAnnual: toAnnual,
     periods: periods, workdays: workdays, r2: r2 };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.BRBPAY = api;
@@ -431,9 +516,9 @@ var UNITS=[['hour','per hour'],['day','per day'],['week','per week'],['month','p
 var PER=[['hour','Hour'],['day','Day'],['week','Week'],['month','Month'],['year','Year']];
 function newPerson(mode){return{mode:mode||'ltd',amount:mode==='perm'?60000:500,unit:mode==='perm'?'year':'day',dpw:5,hoursPerDay:7.5,holidayDays:25,bankHols:8,sickDays:0,
  expenses:0,vatRegistered:false,vatFlat:false,frsRate:14.5,salaryMode:'optimise',salaryCustom:12570,pension:0,pensionUnit:'amt',pensionMethod:'net',employerPension:0,
- studentLoan:'none',pg:false,erInclusive:true};}
-var S={tab:'calc',joint:false,who:0,names:['Person A','Person B'],period:'month',slipFrequency:'month',slipNumber:1,people:[newPerson('ltd'),newPerson('perm')],tgt:{amount:4000,unit:'month'},umb:{rate:500,days:5,margin:39.5,pensionPct:0,taxCode:'1257L'}};
-try{var sv=JSON.parse(localStorage.getItem(KEY)||'null');if(sv&&sv.people){S=Object.assign(S,sv);S.people=sv.people.map(function(p){return Object.assign(newPerson(p.mode),p)});S.tgt=sv.tgt||S.tgt;S.umb=Object.assign({rate:500,days:5,margin:39.5,pensionPct:0,taxCode:'1257L'},sv.umb||{});S.names=(Array.isArray(sv.names)?sv.names:[]).slice(0,2);}}catch(e){}
+ studentLoan:'none',pg:false,erInclusive:true,other:E.otherDefaults()};}
+var S={tab:'calc',y2728:false,cmpView:'hh',joint:false,who:0,names:['Person A','Person B'],period:'month',slipFrequency:'month',slipNumber:1,people:[newPerson('ltd'),newPerson('perm')],tgt:{amount:4000,unit:'month'},umb:{rate:500,days:5,margin:39.5,pensionPct:0,taxCode:'1257L'}};
+try{var sv=JSON.parse(localStorage.getItem(KEY)||'null');if(sv&&sv.people){S=Object.assign(S,sv);S.people=sv.people.map(function(p){var q=Object.assign(newPerson(p.mode),p);q.other=Object.assign(E.otherDefaults(),p.other||{});return q});S.tgt=sv.tgt||S.tgt;S.umb=Object.assign({rate:500,days:5,margin:39.5,pensionPct:0,taxCode:'1257L'},sv.umb||{});S.names=(Array.isArray(sv.names)?sv.names:[]).slice(0,2);}}catch(e){}
 function pn(i){var n=S.names&&S.names[i];n=n?String(n).trim():'';return n||(i===0?'Person A':'Person B')}
 try{var q=new URLSearchParams(location.search);if(q.get('tab'))S.tab=q.get('tab');if(q.get('mode'))S.people[0].mode=q.get('mode');if(q.get('amount'))S.people[0].amount=+q.get('amount');if(q.get('unit'))S.people[0].unit=q.get('unit');if(q.get('joint')){S.joint=true;S.who=+q.get('who')||0}}catch(e){}
 function save(){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}}
@@ -477,11 +562,16 @@ function periodName(n,f){return f==='month'?['April','May','June','July','August
 function periodTable(st,n){var row=st.periods[n-1];return '<table class="statement"><thead><tr><th>Cash flow</th><th>This period</th><th>Year to date</th></tr></thead><tbody>'+row.lines.map(function(l){return '<tr><td>'+esc(l.label)+'</td><td>'+gbp(l.amount,2)+'</td><td>'+gbp(l.ytd,2)+'</td></tr>'}).join('')+'<tr class="netrow"><td>Take-home</td><td>'+gbp(row.net,2)+'</td><td>'+gbp(row.ytdNet,2)+'</td></tr></tbody></table>'}
 function statementNote(p){return 'Annual planning estimate, split evenly across a full tax year. Not an actual payslip or PAYE calculation. '+(p.mode==='sole'||p.mode==='ltd'?'Tax and loan lines are reserves, not payroll deductions. ':'Real PAYE, NI and loan deductions depend on pay dates, tax code, cumulative earnings and payroll rounding. ')+'YTD runs from estimated period 1, not today. Final period adjusts pennies. Personal pension relief is reflected in annual tax; actual refunds may arrive later.'}
 function slipHTML(p){var st=E.statement(p,S.slipFrequency),n=Math.min(S.slipNumber,st.count);var options=st.periods.map(function(x){return[x.number,periodName(x.number,S.slipFrequency)]});return '<h2>Period statement'+(S.joint?' · '+esc(pn(S.who)):'')+'</h2><div class="card"><div class="slip-controls"><div><label for="slip_frequency">Frequency</label><select id="slip_frequency" data-slip="frequency">'+opts([['month','Monthly'],['week','Weekly'],['fourweek','4-weekly']],S.slipFrequency)+'</select></div><div><label for="slip_number">Tax-year period</label><select id="slip_number" data-slip="number">'+opts(options,n)+'</select></div></div><p class="hint">'+esc(statementNote(p))+'</p>'+periodTable(st,n)+'<details><summary>All periods</summary><div class="scroll"><table><thead><tr><th>Period</th><th>Take-home</th><th>YTD net</th></tr></thead><tbody>'+st.periods.map(function(x){return '<tr><td>'+esc(periodName(x.number,S.slipFrequency))+'</td><td>'+gbp(x.net,2)+'</td><td>'+gbp(x.ytdNet,2)+'</td></tr>'}).join('')+'</tbody></table></div></details></div>'}
-function householdOverview(){var hh=E.household(S.people);return '<section class="household-overview"><div class="hero hh"><div class="k">Household take-home · per month</div><div class="big">'+gbp(hh.net/12)+'</div><div class="sub">'+gbp(hh.net)+' a year between you · independently taxed</div></div><div class="person-cards">'+S.people.map(function(p,i){var r=hh.people[i];return '<button class="person-card" type="button" data-who="'+i+'" aria-pressed="'+(S.who===i)+'"><span class="k">'+esc(pn(i))+' · '+esc(modeLabel(p))+'</span><b>'+gbp(r.net/12)+'<small> / month</small></b><span>'+gbp(r.annualGross)+' gross · '+gbp(r.net)+' net a year</span><span class="edit-label">'+(S.who===i?'Editing below':'Edit this person')+'</span></button>'}).join('')+'</div></section>'}
+function householdOverview(){var hh=E.household(S.people,OPT());return '<section class="household-overview"><div class="hero hh"><div class="k">Household take-home · per month</div><div class="big">'+gbp(hh.net/12)+'</div><div class="sub">'+gbp(hh.net)+' a year between you · independently taxed'+(hh.people.some(function(r){return r.all.active})?' · includes other income':'')+'</div></div><div class="person-cards">'+S.people.map(function(p,i){var r=hh.people[i];return '<button class="person-card" type="button" data-who="'+i+'" aria-pressed="'+(S.who===i)+'"><span class="k">'+esc(pn(i))+' · '+esc(modeLabel(p))+'</span><b>'+gbp(r.all.net/12)+'<small> / month</small></b><span>'+gbp(r.all.gross)+' gross · '+gbp(r.all.net)+' net a year</span><span class="edit-label">'+(S.who===i?'Editing below':'Edit this person')+'</span></button>'}).join('')+'</div></section>'}
 function assumptionsHTML(p){var r=E.calc(p);var a=[['Pay type',modeLabel(p)],['Entered income',gbp(p.amount,2)+' '+(UNITS.filter(function(x){return x[0]===p.unit})[0][1])],['Annual income',gbp(r.annualGross,2)],['Working pattern',p.dpw+' days/week, '+p.hoursPerDay+' hours/day'+(p.mode==='perm'?'':'; '+p.holidayDays+' holiday, '+p.bankHols+' bank holiday, '+p.sickDays+' gap days; '+r.workdays+' paid days')],['Expenses',gbp(p.expenses||0)+' per year'],['Personal pension',p.pension+(p.pensionUnit==='pct'?'%':' GBP/year')+'; '+(p.mode==='perm'?p.pensionMethod:'relief at source')],['Employer/company pension',p.employerPension+(p.pensionUnit==='pct'?'%':' GBP/year')],['Student loan',p.studentLoan+'; postgraduate '+(p.pg?'yes':'no')]];
 if(p.mode==='inside')a.push(['Employer NI',p.erInclusive!==false?'Included in entered rate':'Paid on top by client']);if(p.mode==='ltd')a.push(['Director salary',p.salaryMode+(p.salaryMode==='custom'?' '+gbp(p.salaryCustom):'')+'; calculated '+gbp(r.extra.salary)]);if(p.mode==='sole'||p.mode==='ltd')a.push(['VAT',p.vatRegistered?(p.vatFlat?'Flat rate '+p.frsRate+'%':'Registered, no flat-rate surplus'):'Not registered']);return '<ul class="report-assumptions">'+a.map(function(x){return '<li><b>'+esc(x[0])+':</b> '+esc(x[1])+'</li>'}).join('')+'</ul>'}
-function reportHTML(){var people=S.joint?S.people:[P()];return '<header><div class="brand">pay.'+LOGO+'</div><span>Scenario report · '+R.year+'</span></header><p>Generated '+esc(new Date().toLocaleDateString('en-GB'))+' · England · annual planning estimate</p>'+(S.joint?'<h1>Household take-home '+gbp(E.household(people).net/12)+' / month</h1><p>'+gbp(E.household(people).net)+' a year. Each person is taxed separately.</p>':'')+people.map(function(p,i){var st=E.statement(p,S.slipFrequency),n=Math.min(S.slipNumber,st.count);return '<section class="report-person"><h1>'+(S.joint?esc(pn(i))+' · ':'')+esc(modeLabel(p))+'</h1><div class="report-summary"><b>'+gbp(st.result.net,2)+' net / year</b><span>'+gbp(st.result.net/12,2)+' net / month</span></div><h2>Scenario inputs</h2>'+assumptionsHTML(p)+'<h2>'+esc(periodName(n,S.slipFrequency))+' · '+esc(S.slipFrequency==='fourweek'?'4-weekly':S.slipFrequency==='week'?'Weekly':'Monthly')+'</h2><p class="hint">'+esc(statementNote(p))+'</p>'+periodTable(st,n)+'<h2>Full tax-year schedule</h2><table><thead><tr><th>Period</th><th>Take-home</th><th>YTD net</th></tr></thead><tbody>'+st.periods.map(function(x){return '<tr><td>'+esc(periodName(x.number,S.slipFrequency))+'</td><td>'+gbp(x.net,2)+'</td><td>'+gbp(x.ytdNet,2)+'</td></tr>'}).join('')+'</tbody></table>'+st.result.flags.map(function(f){return '<p>'+esc(f)+'</p>'}).join('')+'</section>'}).join('')+'<section class="report-method"><h2>Method and limits</h2><p>6 April 2026 to 5 April 2027. Standard 1257L tax code, NI category A, no other income or benefits. Full-year annual model, not payroll software. Ltd: all post-tax company profit distributed, no Employment Allowance. Sole trader: Class 4 NI; payments on account excluded. Inside IR35: public-sector deemed-payment model, no 5% allowance; employer NI treatment as entered. Pension annual allowance taper, carry forward and money purchase allowance are not modelled.</p><p>Rates last checked '+R.checked+'. See About in pay.brb for HMRC sources. Student loans, relief at source pension refunds and Self Assessment payments can differ in timing from these reserves.</p>'+DISC+'</section>'}
-function openReport(){var existing=$('#report');if(existing)existing.remove();var el=document.createElement('div');el.id='report';el.innerHTML='<div class="report-controls"><button class="btn" data-act="print">Print / save PDF</button><button class="btn ghost" data-act="close-report">Back to calculator</button><p class="hint">On iPhone: tap Print / save PDF, expand the print preview with two fingers, then Share → Save to Files. The report is created on this device.</p></div><div class="report-page">'+reportHTML()+'</div>';document.body.appendChild(el);document.body.classList.add('report-open');window.scrollTo(0,0)}
+function otherReportHTML(p){var r=E.calcAll(p,OPT()),a=r.all;if(!a.active)return'';var pr=a.prop,rows=[];
+ if(pr.rent>0)rows.push(['Rent'+(pr.share<1?' (your share)':''),pr.rent],[pr.allowance?'Property allowance used':'Expenses',-pr.deduction],['Taxable property profit',pr.profit],['Mortgage interest',pr.interest],['Mortgage capital repaid',pr.capital],['Mortgage interest tax credit',a.reduction]);
+ if(a.otherEarn>0)rows.push(['Other earnings',a.otherEarn]);if(a.otherDiv>0)rows.push(['Other dividends',a.otherDiv]);
+ rows.push(['Extra tax on other income',a.extraTax],['Net cash from other income',a.otherCash],['Take-home including other income, a year',a.net]);
+ return'<h2>Other income ('+(a.y2728?'property rates from April 2027':'2026/27')+')</h2><table><tbody>'+rows.map(function(x){return'<tr><td>'+esc(x[0])+'</td><td>'+gbp(x[1],2)+'</td></tr>'}).join('')+'</tbody></table>'+(a.y2728?'<p class="hint">Property income taxed at 22%, 42% and 47% as announced for 2027/28. The rest of this report uses 2026/27 rates.</p>':'')}
+function reportHTML(){var people=S.joint?S.people:[P()];return '<header><div class="brand">pay.'+LOGO+'</div><span>Scenario report · '+R.year+'</span></header><p>Generated '+esc(new Date().toLocaleDateString('en-GB'))+' · England · annual planning estimate</p>'+(S.joint?'<h1>Household take-home '+gbp(E.household(people,OPT()).net/12)+' / month</h1><p>'+gbp(E.household(people,OPT()).net)+' a year. Each person is taxed separately.</p>':'')+people.map(function(p,i){var st=E.statement(p,S.slipFrequency),n=Math.min(S.slipNumber,st.count);return '<section class="report-person"><h1>'+(S.joint?esc(pn(i))+' · ':'')+esc(modeLabel(p))+'</h1><div class="report-summary"><b>'+gbp(st.result.net,2)+' net / year</b><span>'+gbp(st.result.net/12,2)+' net / month</span></div><h2>Scenario inputs</h2>'+assumptionsHTML(p)+otherReportHTML(p)+'<h2>'+esc(periodName(n,S.slipFrequency))+' · '+esc(S.slipFrequency==='fourweek'?'4-weekly':S.slipFrequency==='week'?'Weekly':'Monthly')+'</h2><p class="hint">'+esc(statementNote(p))+'</p>'+periodTable(st,n)+'<h2>Full tax-year schedule</h2><table><thead><tr><th>Period</th><th>Take-home</th><th>YTD net</th></tr></thead><tbody>'+st.periods.map(function(x){return '<tr><td>'+esc(periodName(x.number,S.slipFrequency))+'</td><td>'+gbp(x.net,2)+'</td><td>'+gbp(x.ytdNet,2)+'</td></tr>'}).join('')+'</tbody></table>'+st.result.flags.map(function(f){return '<p>'+esc(f)+'</p>'}).join('')+'</section>'}).join('')+'<section class="report-method"><h2>Method and limits</h2><p>6 April 2026 to 5 April 2027. Standard 1257L tax code, NI category A, no benefits. Other income is only included where entered on the Other income tab. Full-year annual model, not payroll software. Ltd: all post-tax company profit distributed, no Employment Allowance. Sole trader: Class 4 NI; payments on account excluded. Inside IR35: public-sector deemed-payment model, no 5% allowance; employer NI treatment as entered. Pension annual allowance taper, carry forward and money purchase allowance are not modelled. Property: residential let in your own name; the \u00a31,000 property allowance or actual expenses; mortgage interest as a basic-rate tax credit; no property losses carried forward; no NI or student loan on other income.</p><p>Rates last checked '+R.checked+'. See About in pay.brb for HMRC sources. Student loans, relief at source pension refunds and Self Assessment payments can differ in timing from these reserves.</p>'+DISC+'</section>'}
+function openReport(){var existing=$('#report');if(existing)existing.remove();var el=document.createElement('div');el.id='report';el.innerHTML='<div class="report-controls"><button class="btn" data-act="print">Print / save PDF</button><button class="btn ghost" data-act="close-report">Back to calculator</button><p class="hint">On iPhone: tap Print / save PDF, expand the print preview with two fingers, then Share, then Save to Files. The report is created on this device.</p></div><div class="report-page">'+reportHTML()+'</div>';document.body.appendChild(el);document.body.classList.add('report-open');window.scrollTo(0,0)}
 
 /* ---------- results ---------- */
 function perTxt(r,k){var v=r.perPeriod[k];return gbp(v,k==='hour'?2:k==='day'||k==='week'?0:0)}
@@ -503,6 +593,7 @@ function resultsHTML(){
  var h='';
  var p=P(),r=E.calc(p);
  h+=heroHTML(p,r,S.joint?pn(S.who):'Take-home');
+ var ra=E.calcAll(p,OPT()).all;if(ra.active)h+='<div class="flag">These figures are your pay only. With the other income you entered, take-home is '+gbp(ra.net)+' a year. See the Other income tab.</div>';
  h+='<div class="stats"><div><b>'+gbp(r.totalTax)+'</b><span>Tax and NI a year</span></div><div><b>'+pc(r.effective)+'</b><span>Average rate</span></div><div><b>'+pc(r.marginal,0)+'</b><span>On the next \u00a31</span></div></div>';
  r.flags.forEach(function(f){h+='<div class="flag">'+esc(f)+'</div>'});
  h+='<div class="card">'+barHTML(r)+'</div><h2>Breakdown (a year)</h2><div class="card">'+linesHTML(r)+'</div>';
@@ -512,20 +603,123 @@ function resultsHTML(){
  h+=slipHTML(p)+'<button class="btn" type="button" data-act="report">Preview / save PDF report</button><p class="hint">Includes '+(S.joint?'both people and the household total':'this scenario')+', period schedule and assumptions. Nothing is uploaded.</p><button class="btn ghost" type="button" data-act="share">Share or copy summary</button>';
  return h;}
 
+/* ---------- other income ---------- */
+function OPT(){return{y2728:!!S.y2728}}
+function numO(k,label,v,pi,extra){return'<div><label for="o_'+k+'_'+pi+'">'+label+'</label><input id="o_'+k+'_'+pi+'" data-ok="'+k+'" data-pi="'+pi+'" data-t="n" type="text" inputmode="decimal" value="'+esc(v)+'" '+(extra||'')+'></div>'}
+function amtO(k,label,v,pi){return'<label for="o_'+k+'_'+pi+'">'+label+'</label><div class="amt"><span class="pre">\u00a3</span><input id="o_'+k+'_'+pi+'" data-ok="'+k+'" data-pi="'+pi+'" data-t="n" type="text" inputmode="decimal" value="'+esc(v)+'"></div>'}
+function otherHTML(){
+ var pi=S.who,p=S.people[pi],o=p.other,h='';
+ if(S.joint)h+='<div class="seg" role="group" aria-label="Whose other income">'+S.people.map(function(x,i){return'<button type="button" data-who="'+i+'" aria-pressed="'+(S.who===i)+'">'+esc(pn(i))+'</button>'}).join('')+'</div>';
+ h+='<div class="card"><b>Other income for '+esc(S.joint?pn(pi):'you')+'</b><p class="hint" style="margin:4px 0 0">Add rent from a buy to let and any other income, to see the full tax picture on top of your pay. It shows the extra tax the other income causes, using your income from the Calculate tab. Estimate only.</p></div>';
+ h+='<div class="seg" role="group" aria-label="Property tax rates"><button type="button" data-y="0" aria-pressed="'+!S.y2728+'">Property rates 2026/27</button><button type="button" data-y="1" aria-pressed="'+!!S.y2728+'">From April 2027</button></div>';
+ h+='<p class="hint" style="margin:-4px 0 12px">'+(S.y2728?'April 2027 onwards: rent is taxed at 22%, 42% and 47% after your other income, and the mortgage interest credit is 22%. Your pay is still worked out on 2026/27 rates.':'Now: rent is taxed at your normal income tax rates (20%, 40%, 45%), with a 20% mortgage interest credit.')+'</p>';
+ h+='<details open><summary>Rental property</summary><p class="hint" style="margin-top:0">Residential property let in your own name, not through a company. Enter the whole property for a year, then your ownership share.</p>'+
+  amtO('rent','Rent received (a year, whole property)',o.rent,pi)+
+  '<div class="row">'+numO('share','Your share (%)',o.share,pi)+'<div></div></div><p class="hint">Use 100 if you own it alone. Spouses and civil partners are normally taxed on a 50:50 split, whatever the ownership, unless they tell HMRC the real split (form 17).</p>'+
+  '<label for="o_costMode_'+pi+'">Costs for tax</label><select id="o_costMode_'+pi+'" data-ok="costMode" data-pi="'+pi+'">'+opts([['exp','Claim actual expenses'],['allow','Use the \u00a31,000 property allowance']],o.costMode)+'</select>'+
+  amtO('expenses','Other expenses (a year, whole property)',o.expenses,pi)+'<p class="hint">Letting agent, repairs, insurance, ground rent, service charges. Not mortgage interest and not buying the property.</p>'+
+  amtO('interest','Mortgage interest (a year, whole property)',o.interest,pi)+
+  amtO('capital','Mortgage capital repaid (a year, whole property)',o.capital,pi)+'<p class="hint">Capital repayments get no tax relief. They only count in your cash figure.</p>'+
+  amtO('finBf','Finance costs brought forward (your share)',o.finBf,pi)+'<p class="hint">Mortgage interest from earlier years that could not be used yet. Leave at 0 if you do not have any.</p></details>';
+ h+='<details open><summary>Other income</summary><p class="hint" style="margin-top:0">Simple yearly amounts, for example other engagements or pay from bigredbox Ltd.</p>'+
+  amtO('earn','Other earnings (a year)',o.earn,pi)+'<p class="hint">Taxed as normal income. No National Insurance or student loan is added here.</p>'+
+  amtO('div','Other dividends (a year)',o.div,pi)+'<p class="hint">Taxed as dividends on top of everything else. Enter what you receive, after any company tax.</p></details>';
+ h+='<div id="ores"></div>';
+ return h;}
+function otherRes(){
+ var pi=S.who,p=S.people[pi],r=E.calcAll(p,OPT()),a=r.all,o=p.other,h='';
+ if(!a.active)return'<div class="card"><p class="hint" style="margin:0">Enter rent or other income above and the result shows here.</p></div>';
+ var pr=a.prop,mo=a.net/12;
+ h+='<div class="hero"><div class="k">'+esc(S.joint?pn(pi):'Total')+' \u00b7 take-home with other income \u00b7 per month</div><div class="big">'+gbp(mo)+'</div><div class="sub">'+gbp(a.net)+' a year after tax'+(pr.rent>0?', property costs and mortgage':'')+'. Without other income: '+gbp(r.net)+'.</div></div>';
+ h+='<div class="stats"><div><b>'+gbp(a.extraTax)+'</b><span>Extra tax a year</span></div><div><b>'+gbp(a.totalTax)+'</b><span>All tax and NI</span></div><div><b>'+pc(a.effective)+'</b><span>Average rate</span></div></div>';
+ var L=[];
+ if(pr.rent>0)L.push(['Rent'+(pr.share<1?', your share':''),pr.rent,0]);
+ if(a.otherEarn>0)L.push(['Other earnings',a.otherEarn,0]);
+ if(a.otherDiv>0)L.push(['Other dividends',a.otherDiv,0]);
+ if(pr.expenses>0)L.push(['Other expenses',-pr.expenses,1]);
+ if(pr.interest>0)L.push(['Mortgage interest',-pr.interest,1]);
+ if(pr.capital>0)L.push(['Mortgage capital repaid',-pr.capital,1]);
+ L.push(['Extra tax on this income',-a.extraTax,1]);
+ h+='<h2>Cash from other income (a year)</h2><div class="card"><ul class="lines">'+L.map(function(l){return'<li class="'+(l[2]?'neg':'')+'"><span>'+esc(l[0])+'</span><span class="n">'+gbp(l[1])+'</span></li>'}).join('')+'<li class="tot"><span>Net cash</span><span class="n">'+gbp(a.otherCash)+'</span></li></ul></div>';
+ if(pr.rent>0){
+  var W=[];
+  W.push([pr.allowance?'Rent less \u00a31,000 allowance':'Rent less expenses',pr.profit]);
+  W.push(['Tax on all other income, before any credit',a.taxBeforeReduction]);
+  if(a.reducer.available>0||a.reduction>0)W.push(['Mortgage interest credit ('+Math.round(a.reducerRate*100)+'%)',-a.reduction]);
+  W.push(['Extra tax after the credit',a.extraTax]);
+  h+='<h2>Property workings</h2><div class="card"><ul class="lines">'+W.map(function(l){return'<li><span>'+esc(l[0])+'</span><span class="n">'+gbp(l[1])+'</span></li>'}).join('')+'</ul>';
+  if(a.reducer.available>0){var fr=a.reducer;h+='<p class="hint">The credit is '+Math.round(a.reducerRate*100)+'% of the lowest of: mortgage interest '+gbp(fr.available)+', property profit '+gbp(pr.profit)+', and income above your personal allowance '+gbp(a.ati)+'.'+(fr.carry>0.5?' '+gbp(fr.carry)+' of interest is carried forward to next year.':'')+'</p>'}
+  h+='</div>';}
+ var fl=[];
+ if(pr.loss>0)fl.push('Your expenses are more than the rent, so this is a property loss of '+gbp(pr.loss)+'. This estimate taxes no profit and does not carry the loss forward.');
+ if(pr.allowance&&pr.interest>0)fl.push('With the property allowance you cannot claim the mortgage interest credit. Switch to actual expenses to include it.');
+ if(pr.fullyRelieved)fl.push('Rent of \u00a31,000 or less is covered by the property allowance, so no tax and no need to tell HMRC.');
+ if(pr.rent>0&&!pr.fullyRelieved){var alt=Object.assign({},p,{other:Object.assign({},o,{costMode:o.costMode==='allow'?'exp':'allow'})}),ar=E.calcAll(alt,OPT()).all,diff=ar.extraTax-a.extraTax;
+  if(Math.abs(diff)>=1)fl.push((o.costMode==='allow'?'Claiming actual expenses and the mortgage interest credit instead':'Using the \u00a31,000 property allowance instead')+' would '+(diff>0?'cost':'save')+' about '+gbp(Math.abs(diff))+' a year in tax.')}
+ if(pr.rent>0&&pr.rent>RATES2().regSA)fl.push('Gross property income over \u00a32,500 means registering for Self Assessment. This page is an estimate, not a return.');
+ if(a.ani>R.taperStart&&a.ani<R.additionalAt)fl.push('Your total income is in the \u00a3100,000 to \u00a3125,140 band where the personal allowance is withdrawn.');
+ fl.filter(Boolean).forEach(function(f){h+='<div class="flag">'+esc(f)+'</div>'});
+ if(S.joint&&pr.rent>0&&o.share!==''&&+o.share<100){var oi=1-pi;h+='<button class="btn ghost" type="button" data-act="copyprop" style="margin-bottom:12px">Copy this property to '+esc(pn(oi))+' with their '+(100-(+o.share))+'% share</button>'}
+ return h;}
+function RATES2(){return R.property}
+
 /* ---------- compare ---------- */
-function compareHTML(){
+var STATUS=[['perm','Permanent','Perm'],['ltd','Contractor<br>outside IR35','Outside IR35'],['inside','Contractor<br>inside IR35','Inside IR35']];
+function cmpPerson(i){
+ var p=S.people[i],lab=p.mode==='perm'?'Salary':p.mode==='inside'?'Day rate (excl. VAT)':'Contract rate (excl. VAT)';
+ var h='<div class="card cmpcard"><label for="cn_'+i+'">Name</label><input id="cn_'+i+'" type="text" maxlength="24" data-nm="'+i+'" value="'+esc(S.names[i]||'')+'" placeholder="'+(i===0?'Person A':'Person B')+'" autocomplete="off">';
+ h+='<div class="seg tri" role="group" aria-label="Status for '+esc(pn(i))+'" style="margin-top:12px">'+STATUS.map(function(m){return'<button type="button" data-cmode="'+i+'|'+m[0]+'" aria-pressed="'+(p.mode===m[0])+'">'+m[1]+'</button>'}).join('')+'</div>';
+ if(p.mode==='sole')h+='<p class="hint" style="margin:-4px 0 8px">Set to sole trader on the Calculate tab. Pick a status above to change it.</p>';
+ h+='<label for="ci_'+i+'">'+lab+'</label><div class="amt"><span class="pre">\u00a3</span><input id="ci_'+i+'" data-k="amount" data-pi="'+i+'" data-t="n" type="text" inputmode="decimal" value="'+esc(p.amount)+'"><select data-k="unit" data-pi="'+i+'" aria-label="Period">'+opts(UNITS,p.unit)+'</select></div>';
+ h+='<p class="hint">Pension, expenses, student loan and working pattern come from the Calculate tab. Rent and other income from the Other income tab.</p></div>';
+ return h;}
+function cmpHousehold(){
+ var n=S.joint?2:1,ppl=S.people.slice(0,n),hh=E.household(ppl,OPT()),rs=hh.people;
+ var inp='<div class="person-cards cmpcards">'+ppl.map(function(p,i){return cmpPerson(i)}).join('')+'</div>';
+ if(!S.joint)inp+='<button class="btn ghost" type="button" data-act="addb" style="margin-bottom:12px">Add a second person to compare as a household</button>';
+ var h='';
+ var money=function(f){return function(r){return gbp(f(r))}};
+ var any=rs.some(function(r){return r.all.active});
+ var rows=[
+  ['Status',function(r,i){var m=STATUS.filter(function(m){return m[0]===ppl[i].mode})[0];return m?m[2]:'Sole trader'},function(){return n+' people'}],
+  ['Gross income',function(r){return gbp(r.all.gross)},function(){return gbp(hh.gross)}],
+  ['Income tax',function(r){return gbp(r.all.tax)},function(){return gbp(sum(rs,'tax'))}],
+  ['National Insurance',function(r){return gbp(r.all.ni)},function(){return gbp(sum(rs,'ni'))}],
+  ['Corporation tax',function(r){return gbp(r.all.ct)},function(){return gbp(sum(rs,'ct'))}],
+  ['Dividend tax',function(r){return gbp(r.all.divTax)},function(){return gbp(sum(rs,'divTax'))}],
+  ['Student loan',function(r){return gbp(r.all.sl)},function(){return gbp(sum(rs,'sl'))}],
+  ['Total liability',function(r){return gbp(r.all.totalTax)},function(){return gbp(hh.totalTax)},'b'],
+  ['Average rate',function(r){return pc(r.all.effective)},function(){return pc(hh.effective)}],
+  ['Take-home a year',function(r){return gbp(r.all.net)},function(){return gbp(hh.net)},'b'],
+  ['A month',function(r){return gbp(r.all.net/12)},function(){return gbp(hh.net/12)},'b']];
+ if(any)rows.splice(9,0,['Other income net cash (in take-home)',function(r){return gbp(r.all.otherCash)},function(){return gbp(rs.reduce(function(t,r){return t+r.all.otherCash},0))}]);
+ function sum(a,k){return a.reduce(function(t,r){return t+r.all[k]},0)}
+ h+='<h2>'+(S.joint?'Household':esc(pn(0)))+'</h2><div class="card"><div class="scroll"><table class="cmpt"><tr><th></th>'+ppl.map(function(p,i){return'<th>'+esc(pn(i))+'</th>'}).join('')+(S.joint?'<th class="hhc">Household</th>':'')+'</tr>'+
+  rows.map(function(rw){var cls=rw[3]==='b'?' class="strong"':'';return'<tr'+cls+'><td>'+rw[0]+'</td>'+rs.map(function(r,i){return'<td>'+rw[1](r,i)+'</td>'}).join('')+(S.joint?'<td class="hhc">'+rw[2]()+'</td>':'')+'</tr>'}).join('')+'</table></div>'+
+  '<p class="hint" style="margin:10px 0 0">Each person is taxed separately on their own income'+(any?', including rent and other income entered on the Other income tab':'')+'. Contractor outside IR35 is a limited company paying salary and dividends. Inside IR35 means the client treats you as an employee for tax. That status is for your client to decide, not this page.</p></div>';
+ if(S.joint&&ppl[0].mode!=='sole'&&hh.net>0)h+='<div class="card"><b>Who keeps what</b><p class="hint" style="margin:4px 0 0">'+esc(pn(0))+' keeps '+gbp(rs[0].all.net)+' and '+esc(pn(1))+' keeps '+gbp(rs[1].all.net)+' a year. Together the household pays '+gbp(hh.totalTax)+' in tax and NI, an average of '+pc(hh.effective)+'.</p></div>';
+ return{inp:inp,res:h};}
+function cmpThree(){
+ var h='';
+ if(S.joint)h+='<div class="seg" role="group" aria-label="Whose income">'+S.people.map(function(x,i){return'<button type="button" data-who="'+i+'" aria-pressed="'+(S.who===i)+'">'+esc(pn(i))+'</button>'}).join('')+'</div>';
  var base=Object.assign({},P()),annual=E.calc(base).annualGross;
- var cols=[['sole','Sole trader'],['ltd','Ltd outside'],['inside','Inside IR35']];
- var rs=cols.map(function(c){var q=Object.assign({},base,{mode:c[0],amount:annual,unit:'year'});if(base.mode==='perm'){q.expenses=0}var r=E.calc(q);r._p=q;return r});
+ var cols=[['perm','Permanent'],['ltd','Ltd outside IR35'],['inside','Inside IR35']];
+ var rs=cols.map(function(c){var q=Object.assign({},base,{mode:c[0],amount:annual,unit:'year'});if(c[0]==='perm'){q.expenses=0;q.pensionMethod=base.pensionMethod||'net'}var r=E.calc(q);r._p=q;return r});
  var best=Math.max.apply(null,rs.map(function(r){return r.net}));
  function row(label,fn,bestRow){return'<tr><td>'+label+'</td>'+rs.map(function(r){return'<td'+(bestRow&&r.net===best?' class="best"':'')+'>'+fn(r)+'</td>'}).join('')+'</tr>'}
  var wd=E.workdays(Object.assign({},base,{mode:'ltd'}));
- var h='<h2>Same income, three ways</h2><div class="card"><p class="hint" style="margin:0 0 10px">Your '+gbp(annual)+' a year, using your working pattern, pension, expenses and student loan settings from the Calculate tab.</p><div class="scroll"><table><tr><th></th>'+cols.map(function(c){return'<th>'+c[1]+'</th>'}).join('')+'</tr>'+
+ h+='<h2>Same income, three ways</h2><div class="card"><p class="hint" style="margin:0 0 10px">'+esc(S.joint?pn(S.who)+"'s":'Your')+' '+gbp(annual)+' a year, using the working pattern, pension, expenses and student loan settings from the Calculate tab. The permanent column treats the same figure as a salary.</p><div class="scroll"><table><tr><th></th>'+cols.map(function(c){return'<th>'+c[1]+'</th>'}).join('')+'</tr>'+
  row('Take-home a year',function(r){return gbp(r.net)},1)+row('A month',function(r){return gbp(r.net/12)},1)+row('A day',function(r){return gbp(r.net/wd)},1)+
  row('Income tax',function(r){return gbp(r.tax)})+row('NI',function(r){return gbp(r.ni)})+row('Corp. tax',function(r){return gbp(r.ct)})+row('Dividend tax',function(r){return gbp(r.divTax)})+row('Average rate',function(r){return pc(r.effective)})+
  row('Vs best',function(r){return r.net===best?'best':'-'+gbp(best-r.net)})+'</table></div></div>';
- h+='<p class="hint">Inside IR35 means the client treats you as an employee for tax, so there is no dividend route. Whether you are inside or outside is for your client to decide and tell you, not something this page can answer. Sole trader often comes out ahead at higher incomes now dividend tax has risen, but a limited company gives liability protection and lets you leave profit in the company.</p>';
- return h;}
+ h+='<p class="hint">Inside IR35 means the client treats you as an employee for tax, so there is no dividend route. Whether you are inside or outside is for your client to decide and tell you, not something this page can answer. A limited company gives liability protection and lets you leave profit in the company. Rent and other income are not included here.</p>';
+ return{inp:'',res:h};}
+function compareHTML(){
+ var v=S.cmpView==='three'?'three':'hh';
+ var h='<div class="seg" role="group" aria-label="Compare view"><button type="button" data-cview="hh" aria-pressed="'+(v==='hh')+'">Household</button><button type="button" data-cview="three" aria-pressed="'+(v==='three')+'">Same income, three ways</button></div>';
+ var x=v==='hh'?cmpHousehold():cmpThree();
+ return h+x.inp+'<div id="cmpres">'+x.res+'</div>';}
+function paintCompare(){var v=S.cmpView==='three'?'three':'hh',x=v==='hh'?cmpHousehold():cmpThree(),el=$('#cmpres');if(el)el.innerHTML=x.res}
 
 /* ---------- umbrella ---------- */
 function umbHTML(){
@@ -559,16 +753,16 @@ function targetRes(){
 function infoHTML(){
  var N=R.ni;
  var h='<h2>Rates used: '+R.year+'</h2><div class="card"><table><tr><th>Item</th><th>Value</th></tr>'+
- [['Personal allowance','\u00a3'+R.pa.toLocaleString('en-GB')+', tapered over \u00a3100,000'],['Income tax (England)','20% to \u00a350,270, 40% to \u00a3125,140, 45% above'],['Employee NI','8% to \u00a350,270, 2% above'],['Employer NI','15% above \u00a35,000'],['Class 4 NI','6% to \u00a350,270, 2% above'],['Dividend tax','10.75%, 35.75%, 39.35%; \u00a3500 allowance'],['Corporation tax','19% to \u00a350k, 25% over \u00a3250k, marginal relief between'],['Student loan','9% over plan threshold (PG 6% over \u00a321,000)'],['Pension annual allowance','\u00a360,000'],['VAT flat rate','Sector rate on VAT-inclusive turnover, 16.5% if limited cost']].map(function(x){return'<tr><td>'+x[0]+'</td><td>'+x[1]+'</td></tr>'}).join('')+'</table></div>';
- h+='<h2>How it works</h2><div class="card"><ul class="src" style="padding-left:18px;margin:0"><li>Tax year 6 April 2026 to 5 April 2027. England, Wales and Northern Ireland bands. Scotland is not included yet.</li><li>Standard tax code 1257L, NI category A, no benefits in kind, no other income, full year worked.</li><li>Ltd outside IR35: contract income less expenses, employer pension, salary and employer NI, then corporation tax. All profit is paid out as dividends. No Employment Allowance (a sole director cannot claim it).</li><li>Inside IR35 (public sector or medium/large client): the fee-payer takes the invoice excluding VAT, removes any allowable expenses, and treats the rest as employment pay with PAYE and NI. There is no 5% allowance and no dividend route. By default your rate is taken to include employer NI.</li><li>Sole trader: profit taxed with Class 4 NI. Class 2 is no longer due above the small profits threshold. Payments on account are not modelled.</li><li>Student loans are worked out on income over the plan threshold; for directors and sole traders HMRC uses total income through Self Assessment.</li><li>Pension: net pay and salary sacrifice reduce taxable pay. Relief at source adds 20% and extends your basic-rate band. Tapered and money purchase annual allowances are not modelled.</li><li>Working days = days a week x 52, less holiday, bank holidays and sick/gap days.</li></ul></div>';
- h+='<h2>Sources</h2><ul class="src" style="padding-left:18px"><li><a href="https://www.gov.uk/income-tax-rates">gov.uk income tax rates</a></li><li><a href="https://www.gov.uk/guidance/rates-and-thresholds-for-employers-2026-to-2027">HMRC rates and thresholds for employers 2026 to 2027</a></li><li><a href="https://www.gov.uk/government/publications/rates-and-allowances-national-insurance-contributions/rates-and-allowances-national-insurance-contributions">NI rates and allowances</a></li><li><a href="https://www.gov.uk/tax-on-dividends">Tax on dividends</a></li><li><a href="https://www.gov.uk/corporation-tax-rates">Corporation tax rates</a> and <a href="https://www.gov.uk/hmrc-internal-manuals/company-taxation-manual/ctm03925">marginal relief</a></li><li><a href="https://www.gov.uk/repaying-your-student-loan/what-you-pay">Student loan repayments</a></li><li><a href="https://www.gov.uk/tax-on-your-private-pension/annual-allowance">Pension annual allowance</a></li><li><a href="https://www.gov.uk/hmrc-internal-manuals/employment-status-manual/esm9070">Off-payroll: deemed direct payment (ESM9070)</a></li><li><a href="https://www.gov.uk/guidance/off-payroll-working-for-clients">Off-payroll working for clients</a></li><li><a href="https://www.gov.uk/vat-flat-rate-scheme/how-much-you-pay">VAT flat rate scheme</a></li></ul><p class="hint">Rates last checked '+R.checked+'.</p>';
+ [['Personal allowance','\u00a3'+R.pa.toLocaleString('en-GB')+', tapered over \u00a3100,000'],['Income tax (England)','20% to \u00a350,270, 40% to \u00a3125,140, 45% above'],['Employee NI','8% to \u00a350,270, 2% above'],['Employer NI','15% above \u00a35,000'],['Class 4 NI','6% to \u00a350,270, 2% above'],['Dividend tax','10.75%, 35.75%, 39.35%; \u00a3500 allowance'],['Corporation tax','19% to \u00a350k, 25% over \u00a3250k, marginal relief between'],['Student loan','9% over plan threshold (PG 6% over \u00a321,000)'],['Pension annual allowance','\u00a360,000'],['VAT flat rate','Sector rate on VAT-inclusive turnover, 16.5% if limited cost'],['Rent (2026/27)','Taxed as normal income, 20%, 40%, 45%, no NI'],['Rent from April 2027','22%, 42%, 47%, after other income and before dividends'],['Property allowance','\u00a31,000 instead of expenses'],['Mortgage interest (residential)','Not an expense. 20% tax credit (22% from April 2027) on the lowest of the interest, property profit and income above the personal allowance']].map(function(x){return'<tr><td>'+x[0]+'</td><td>'+x[1]+'</td></tr>'}).join('')+'</table></div>';
+ h+='<h2>How it works</h2><div class="card"><ul class="src" style="padding-left:18px;margin:0"><li>Tax year 6 April 2026 to 5 April 2027. England, Wales and Northern Ireland bands. Scotland is not included yet.</li><li>Standard tax code 1257L, NI category A, no benefits in kind, no other income, full year worked.</li><li>Ltd outside IR35: contract income less expenses, employer pension, salary and employer NI, then corporation tax. All profit is paid out as dividends. No Employment Allowance (a sole director cannot claim it).</li><li>Inside IR35 (public sector or medium/large client): the fee-payer takes the invoice excluding VAT, removes any allowable expenses, and treats the rest as employment pay with PAYE and NI. There is no 5% allowance and no dividend route. By default your rate is taken to include employer NI.</li><li>Sole trader: profit taxed with Class 4 NI. Class 2 is no longer due above the small profits threshold. Payments on account are not modelled.</li><li>Student loans are worked out on income over the plan threshold; for directors and sole traders HMRC uses total income through Self Assessment.</li><li>Pension: net pay and salary sacrifice reduce taxable pay. Relief at source adds 20% and extends your basic-rate band. Tapered and money purchase annual allowances are not modelled.</li><li>Working days = days a week x 52, less holiday, bank holidays and sick/gap days.</li><li>Other income: residential property let in your own name. It runs your income tax with and without the rent and other income, so the extra tax includes the effect on bands, the personal allowance taper and dividends. The \u00a31,000 property allowance and actual expenses cannot be mixed, and the allowance rules out the mortgage interest credit. Spouses are normally taxed 50:50 on joint property unless HMRC has the real split. Property losses carried forward, partnerships, furnished holiday lets, non-residential property and Scotland are not modelled. Other earnings carry no NI or student loan.</li><li>From April 2027 the Other income tab can switch to the new property rates. Only the property rates, ordering and credit change. Your pay still uses 2026/27 figures.</li></ul></div>';
+ h+='<h2>Sources</h2><ul class="src" style="padding-left:18px"><li><a href="https://www.gov.uk/income-tax-rates">gov.uk income tax rates</a></li><li><a href="https://www.gov.uk/guidance/rates-and-thresholds-for-employers-2026-to-2027">HMRC rates and thresholds for employers 2026 to 2027</a></li><li><a href="https://www.gov.uk/government/publications/rates-and-allowances-national-insurance-contributions/rates-and-allowances-national-insurance-contributions">NI rates and allowances</a></li><li><a href="https://www.gov.uk/tax-on-dividends">Tax on dividends</a></li><li><a href="https://www.gov.uk/corporation-tax-rates">Corporation tax rates</a> and <a href="https://www.gov.uk/hmrc-internal-manuals/company-taxation-manual/ctm03925">marginal relief</a></li><li><a href="https://www.gov.uk/repaying-your-student-loan/what-you-pay">Student loan repayments</a></li><li><a href="https://www.gov.uk/tax-on-your-private-pension/annual-allowance">Pension annual allowance</a></li><li><a href="https://www.gov.uk/hmrc-internal-manuals/employment-status-manual/esm9070">Off-payroll: deemed direct payment (ESM9070)</a></li><li><a href="https://www.gov.uk/guidance/off-payroll-working-for-clients">Off-payroll working for clients</a></li><li><a href="https://www.gov.uk/vat-flat-rate-scheme/how-much-you-pay">VAT flat rate scheme</a></li><li><a href="https://www.gov.uk/guidance/changes-to-tax-relief-for-residential-landlords-how-its-worked-out-including-case-studies">Tax relief for residential landlords: how it is worked out</a></li><li><a href="https://www.gov.uk/guidance/tax-free-allowances-on-property-and-trading-income">Property and trading allowances</a></li><li><a href="https://www.gov.uk/government/publications/changes-to-tax-rates-for-property-savings-and-dividend-income/change-to-tax-rates-for-property-savings-and-dividend-income-technical-note">Property income rates from April 2027, technical note</a></li><li><a href="https://www.gov.uk/guidance/income-tax-when-you-rent-out-a-property-working-out-your-rental-income">Working out your rental income</a> and <a href="https://www.gov.uk/government/publications/income-tax-declaration-of-beneficial-interests-in-joint-property-and-income-17">form 17, joint property</a></li></ul><p class="hint">Rates last checked '+R.checked+'. Property rules checked '+R.property.checked+'.</p>';
  return h;}
 
 /* ---------- shell ---------- */
 var LOGO='<svg aria-label="brb" viewBox="0 0 1726 757" xmlns="http://www.w3.org/2000/svg"><path fill="#F0EDE8" transform="translate(-76 757) scale(1 -1)" d="M76 757V226C76 74 143 0 270 0H416C556 0 644 86 644 264C644 442 556 528 416 528H182V757ZM405 426C497 426 537 378 537 264C537 150 497 103 405 103H301C215 103 182 141 182 231V426Z"/><path fill="#C8221A" transform="translate(619 757) scale(1 -1)" d="M218 528C114 528 75 480 75 374V0H181V358C181 404 202 426 249 426H435V528Z"/><path fill="#F0EDE8" transform="translate(1082 757) scale(1 -1)" d="M76 757V226C76 74 143 0 270 0H416C556 0 644 86 644 264C644 442 556 528 416 528H182V757ZM405 426C497 426 537 378 537 264C537 150 497 103 405 103H301C215 103 182 141 182 231V426Z"/></svg>';
 var DISC='<div class="disc">An estimate for guidance only, not tax or financial advice. It uses published HMRC rates for '+R.year+' and the assumptions listed under About. Your own position may differ. IR35 status is decided by your client or fee-payer, not by this page. Speak to an accountant before making decisions about pay, pensions or company structure. Your figures stay on this device. A bigredbox tool.</div>';
 function shell(){
- var tabs=[['calc','Calculate'],['cmp','Compare'],['tgt','Target'],['umb','Umbrella'],['info','About']];
+ var tabs=[['calc','Calculate'],['cmp','Compare'],['oth','Other income'],['tgt','Target'],['umb','Umbrella'],['info','About']];
  var h='<div class="wrap"><header><div class="brand">pay.'+LOGO+'</div><span class="yr">'+R.year+'</span></header><div class="tabs" role="tablist">'+tabs.map(function(t){return'<button role="tab" type="button" data-tab="'+t[0]+'" aria-selected="'+(S.tab===t[0])+'">'+t[1]+'</button>'}).join('')+'</div><main id="main"></main>'+DISC+'</div>';
  $('#app').innerHTML=h;}
 function main(){
@@ -578,30 +772,38 @@ function main(){
   if(S.joint)h+='<div id="household">'+householdOverview()+'</div>';
   h+='<div class="card" id="form">'+formHTML(P())+'</div><div id="res"></div>';}
  else if(S.tab==='cmp')h='<div id="cmp"></div>';
+ else if(S.tab==='oth')h=otherHTML();
  else if(S.tab==='tgt')h=targetHTML();
  else if(S.tab==='umb')h=umbHTML();
  else h=infoHTML();
  m.innerHTML=h;paint();}
 function paint(){
  if(S.tab==='calc'){if(S.joint&&$('#household'))$('#household').innerHTML=householdOverview();$('#res').innerHTML=resultsHTML();var p=P();if(p.mode!=='perm'){var hh=$('#wdhint');if(hh)hh.textContent='Working days a year: '+E.workdays(p)+'.'}}
- else if(S.tab==='cmp')$('#cmp').innerHTML=compareHTML();
+ else if(S.tab==='cmp'){if($('#cmpres'))paintCompare();else $('#cmp').innerHTML=compareHTML()}
+ else if(S.tab==='oth')$('#ores').innerHTML=otherRes();
  else if(S.tab==='tgt')$('#tres').innerHTML=targetRes();
  else if(S.tab==='umb')$('#ures').innerHTML=umbRes();}
 function setField(el){
- var k=el.dataset.k,t=el.dataset.t,v=el.value;if(t==='b')v=el.checked;else if(t==='n'){var x=parseFloat(String(v).replace(/[,\u00a3\s]/g,''));v=isNaN(x)?0:x}
- var p=P();p[k]=(k==='frsRate')?parseFloat(v):v;save();}
-document.addEventListener('input',function(e){var el=e.target;if(el.dataset.uk){var k=el.dataset.uk,v=el.value;if(k!=='taxCode'){var x=parseFloat(String(v).replace(/[,\u00a3\s%]/g,''));v=isNaN(x)?0:x}S.umb[k]=v;save();$('#ures').innerHTML=umbRes();return}if(el.dataset.nm){S.names[+el.dataset.nm]=el.value.slice(0,24);save();paint();return}if(el.dataset.k&&el.type!=='checkbox'&&el.tagName!=='SELECT'){setField(el);paint()}
+ var k=el.dataset.ok||el.dataset.k,t=el.dataset.t,v=el.value;if(t==='b')v=el.checked;else if(t==='n'){var x=parseFloat(String(v).replace(/[,\u00a3\s%]/g,''));v=isNaN(x)?0:x}
+ var p=el.dataset.pi!=null?S.people[+el.dataset.pi]:P();if(el.dataset.ok){p.other[k]=v;save();return}p[k]=(k==='frsRate')?parseFloat(v):v;save();}
+function setMode(p,m){var old=p.mode;if(old===m)return false;var wasPerm=old==='perm',nowPerm=m==='perm';p.mode=m;
+ if(wasPerm!==nowPerm){p.unit=nowPerm?'year':'day';p.amount=nowPerm?60000:500;p.pension=0;p.employerPension=0;p.pensionMethod='net'}
+ if(!nowPerm&&p.pensionMethod!=='net')p.pensionMethod='net';save();return true}
+document.addEventListener('input',function(e){var el=e.target;if(el.dataset.uk){var k=el.dataset.uk,v=el.value;if(k!=='taxCode'){var x=parseFloat(String(v).replace(/[,\u00a3\s%]/g,''));v=isNaN(x)?0:x}S.umb[k]=v;save();$('#ures').innerHTML=umbRes();return}if(el.dataset.nm){S.names[+el.dataset.nm]=el.value.slice(0,24);save();paint();return}if((el.dataset.k||el.dataset.ok)&&el.type!=='checkbox'&&el.tagName!=='SELECT'){setField(el);paint()}
  if(el.dataset.tk){S.tgt[el.dataset.tk]=el.dataset.tk==='amount'?el.value:el.value;save();$('#tres').innerHTML=targetRes()}});
 document.addEventListener('change',function(e){var el=e.target;if(el.dataset.slip){if(el.dataset.slip==='frequency'){S.slipFrequency=el.value;S.slipNumber=1}else S.slipNumber=+el.value;save();paint();return}
- if(el.dataset.k&&(el.type==='checkbox'||el.tagName==='SELECT')){setField(el);var structural=['vatRegistered','vatFlat','salaryMode','unit'].indexOf(el.dataset.k)>-1;
-  if(el.dataset.k==='unit'){paint();return}
+ if((el.dataset.k||el.dataset.ok)&&(el.type==='checkbox'||el.tagName==='SELECT')){setField(el);var structural=['vatRegistered','vatFlat','salaryMode','unit'].indexOf(el.dataset.k)>-1;
+  if(el.dataset.ok||el.dataset.pi!=null||el.dataset.k==='unit'){paint();return}
   if(structural){var f=$('#form');f.innerHTML=formHTML(P());paint();var nf=document.getElementById(el.id);if(nf)nf.focus();}else paint();}
  if(el.dataset.tk){S.tgt[el.dataset.tk]=el.value;save();$('#tres').innerHTML=targetRes()}});
 document.addEventListener('click',function(e){var b=e.target.closest('button');if(!b)return;
  if(b.dataset.act==='report'){openReport();return}if(b.dataset.act==='close-report'){$('#report').remove();document.body.classList.remove('report-open');return}if(b.dataset.act==='print'){window.print();return}if(b.dataset.tab){S.tab=b.dataset.tab;save();shell();main();return}
- if(b.dataset.mode){var p=P(),old=p.mode;if(old!==b.dataset.mode){var wasPerm=old==='perm',nowPerm=b.dataset.mode==='perm';p.mode=b.dataset.mode;
-   if(wasPerm!==nowPerm){p.unit=nowPerm?'year':'day';p.amount=nowPerm?60000:500;p.pension=0;p.employerPension=0;p.pensionMethod='net'}
-   if(!nowPerm&&p.pensionMethod!=='net')p.pensionMethod='net';save();$('#form').innerHTML=formHTML(p);paint()}return}
+ if(b.dataset.mode){var p=P();if(setMode(p,b.dataset.mode)){$('#form').innerHTML=formHTML(p);paint()}return}
+ if(b.dataset.cmode){var cm=b.dataset.cmode.split('|');setMode(S.people[+cm[0]],cm[1]);main();return}
+ if(b.dataset.cview){S.cmpView=b.dataset.cview;save();main();return}
+ if(b.dataset.y){S.y2728=b.dataset.y==='1';save();main();return}
+ if(b.dataset.act==='addb'){S.joint=true;save();main();return}
+ if(b.dataset.act==='copyprop'){var from=S.people[S.who],to=S.people[1-S.who],fo=from.other,sh=Math.max(0,Math.min(100,100-(+fo.share||0)));to.other=Object.assign({},to.other,{rent:fo.rent,expenses:fo.expenses,interest:fo.interest,capital:fo.capital,costMode:fo.costMode,share:sh,finBf:0});save();S.who=1-S.who;save();main();return}
  if(b.dataset.per){S.period=b.dataset.per;save();paint();return}
  if(b.dataset.joint){S.joint=b.dataset.joint==='1';if(!S.joint)S.who=0;save();main();return}
  if(b.dataset.who){S.who=+b.dataset.who;save();main();return}
